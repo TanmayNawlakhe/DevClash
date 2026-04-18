@@ -286,9 +286,14 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
             },
         )
         logger.exception("[job] Repo analysis failed for %s", github_url)
+        # On failure, clean up the clone immediately (nothing to embed)
+        if clone_path is not None and clone_path.exists():
+            import shutil as _shutil
+            _shutil.rmtree(clone_path, ignore_errors=True)
+            logger.info("[job] Cleaned up clone (failure): %s", clone_path)
 
     finally:
-        # Always remove the cloned repo from disk, regardless of outcome
-        if clone_path is not None:
-            # shutil.rmtree(clone_path, ignore_errors=True)
-            logger.info("[job] Cleaned up clone directory: %s", clone_path)
+        # On SUCCESS the clone is intentionally kept on disk.
+        # clone_path is in the graph document — embedding_service.py
+        # reads full file content from it, then deletes it when done.
+        pass

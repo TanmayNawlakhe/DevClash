@@ -92,3 +92,13 @@ class RepoSummariesResponse(BaseModel):
     total_files: int
     summarized_files: int
     summaries: list[RepoFileSummary]
+
+
+class EmbeddingStatusResponse(BaseModel):
+    repo_id: str
+    status: str          # processing | complete | failed | not_started
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_msg: str | None = None
+    file_count: int = 0  # number of files embedded (0 until complete)
+    message: str = ""

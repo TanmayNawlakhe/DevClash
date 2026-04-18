@@ -5,11 +5,12 @@ import subprocess
 from typing import Any
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from app.config import settings
 from app.db.mongodb import get_database
 from app.schemas.repo import (
+    EmbeddingStatusResponse,
     RepoActionResponse,
     RepoCreateRequest,
     RepoFileDetailResponse,
@@ -24,6 +25,7 @@ from app.schemas.repo import (
 )
 from app.services.repo_analyzer import is_supported_github_url, normalize_github_url
 from app.services.repo_job_processor import enqueue_repo_job, remove_repo_job_from_queue
+from app.services.embedding_service import run_embedding_job
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__, level=settings.log_level)
@@ -579,4 +581,85 @@ async def retry_repo_job(repo_id: str) -> RepoActionResponse:
         repo_id=repo_id,
         status="pending",
         message="Retry scheduled",
+    )
+
+
+# ── Embedding endpoints ────────────────────────────────────────────────────────
+
+@router.post("/{repo_id}/embeddings", response_model=EmbeddingStatusResponse)
+async def start_repo_embeddings(
+    repo_id: str,
+    background_tasks: BackgroundTasks,
+) -> EmbeddingStatusResponse:
+    """Start vector embedding generation for a completed repository.
+
+    Triggers three embeddings per file (CodeBERT on code, MiniLM on file
+    summary, MiniLM per-function) and persists them to the ``embeddings``
+    collection.  Returns immediately; poll ``GET /embeddings/status`` for
+    progress.
+
+    **Requires** the analysis job to be ``complete`` first.
+    """
+    repo_object_id = _to_object_id(repo_id)
+    db = get_database()
+
+    repo_doc = await db["repos"].find_one({"_id": repo_object_id})
+    if not repo_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository not found",
+        )
+    if repo_doc.get("status") != "complete":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Repository analysis must be complete before embedding (status: {repo_doc.get('status')})",
+        )
+
+    # Check if already running
+    existing = await db["embeddings"].find_one({"repo_id": repo_object_id})
+    if existing and existing.get("status") == "processing":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Embedding job is already in progress",
+        )
+
+    logger.info("[embeddings] Queuing embedding job for repo %s", repo_id)
+    background_tasks.add_task(run_embedding_job, repo_object_id)
+
+    return EmbeddingStatusResponse(
+        repo_id=repo_id,
+        status="processing",
+        message="Embedding generation started in background. Poll GET /embeddings/status for progress.",
+    )
+
+
+@router.get("/{repo_id}/embeddings/status", response_model=EmbeddingStatusResponse)
+async def get_embedding_status(repo_id: str) -> EmbeddingStatusResponse:
+    """Return the current status of the embedding job for a repository."""
+    repo_object_id = _to_object_id(repo_id)
+    db = get_database()
+
+    doc = await db["embeddings"].find_one(
+        {"repo_id": repo_object_id},
+        projection={"file_embeddings": 0},  # exclude large vectors from status
+    )
+    if not doc:
+        return EmbeddingStatusResponse(
+            repo_id=repo_id,
+            status="not_started",
+            message="No embedding job found. POST to /embeddings to start.",
+        )
+
+    return EmbeddingStatusResponse(
+        repo_id=repo_id,
+        status=str(doc.get("status", "unknown")),
+        started_at=doc.get("started_at"),
+        completed_at=doc.get("completed_at"),
+        error_msg=doc.get("error_msg"),
+        file_count=int(doc.get("file_count", 0)),
+        message=(
+            f"{doc.get('file_count', 0)} files embedded"
+            if doc.get("status") == "complete"
+            else doc.get("error_msg", "")
+        ) or "",
     )

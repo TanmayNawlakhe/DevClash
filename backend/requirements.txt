@@ -4,3 +4,22 @@ motor==3.7.0
 redis==5.2.1
 python-dotenv==1.0.1
 pytest==8.3.5
+pydantic
+
+# ── Tree-sitter: AST-based function extraction ─────────────────────────────────
+tree-sitter
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-go
+tree-sitter-rust
+tree-sitter-c
+tree-sitter-cpp
+
+# ── Embeddings: CodeBERT + MiniLM ─────────────────────────────────────────────
+# Install torch CPU-only to keep download size small (~200MB vs ~3GB for CUDA)
+# Run this line separately first if the pip install below is slow:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch
+transformers
+sentence-transformers
