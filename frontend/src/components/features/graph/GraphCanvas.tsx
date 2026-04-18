@@ -276,7 +276,7 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
                   transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                   className="origin-top-left"
                 >
-                  <GraphToolbar onOpenQuery={() => { setQueryOpen(true); setToolbarOpen(false) }} />
+                  <GraphToolbar repoId={graph.meta.repoId} onOpenQuery={() => { setQueryOpen(true); setToolbarOpen(false) }} />
                 </motion.div>
               )}
             </AnimatePresence>

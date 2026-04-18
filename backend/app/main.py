@@ -16,6 +16,7 @@ from app.db.redis_client import close_redis_connection, connect_to_redis
 from app.utils.logger import get_logger
 from app.config import settings
 from app.api.repos import ensure_repo_indexes, router as repos_router
+from app.api.search import router as search_router
 
 logger = get_logger(__name__, level=settings.log_level)
 
@@ -44,6 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(repos_router)
+app.include_router(search_router)
 
 
 @app.get("/health")

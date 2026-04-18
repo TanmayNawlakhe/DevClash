@@ -60,6 +60,47 @@ export async function fetchHeatmap(repoId: string) {
 
 export async function submitNLQuery(repoId: string, query: string): Promise<QueryResult> {
   if (hasRepoApi()) {
+    try {
+      const { data } = await api.post<any>(`/api/repos/${repoId}/search`, {
+        query,
+        top_files: 8,
+        top_functions: 5,
+        min_score: 0.3,
+      })
+
+      return {
+        fileIds: (data.flow ?? []).map((entry: any) => entry.file_path),
+        results: (data.flow ?? []).map((entry: any) => ({
+          fileId: entry.file_path,
+          path: entry.file_path,
+          score: entry.relevance_score,
+          snippet: entry.summary,
+        })),
+        answer: data.answer,
+        mermaid: data.mermaid,
+        totalMatched: data.total_matched,
+        flow: (data.flow ?? []).map((entry: any) => ({
+          rank: entry.rank,
+          fileId: entry.file_path,
+          path: entry.file_path,
+          score: entry.relevance_score,
+          scoreBreakdown: entry.score_breakdown ?? {},
+          layer: entry.layer,
+          language: entry.language,
+          isEntry: entry.is_entry,
+          summary: entry.summary,
+          matchedFunctions: (entry.matched_functions ?? []).map((fn: any) => ({
+            name: fn.name,
+            score: fn.score,
+          })),
+        })),
+      }
+    } catch (error: any) {
+      if (error?.response?.status && error.response.status !== 404) {
+        throw error
+      }
+    }
+
     const graph = await fetchGraph(repoId)
     let summariesPayload: { summaries: Array<{ path: string; summary: string }> } = { summaries: [] }
 

@@ -158,7 +158,7 @@ export function Sidebar() {
       </nav>
 
       {/* Pro badge */}
-      {sidebarOpen && (
+{/*       {sidebarOpen && (
         <div className="mx-2.5 mb-3 rounded-xl border border-primary/20 bg-primary/6 p-3">
           <div className="flex items-center gap-2 text-xs">
             <Sparkles className="size-3.5 text-primary" />
@@ -169,7 +169,7 @@ export function Sidebar() {
           </p>
         </div>
       )}
-
+ */}
       {/* User footer */}
       <div className="border-t border-sidebar-border p-3">
         <div className={cn('flex items-center gap-3', !sidebarOpen && 'justify-center')}>

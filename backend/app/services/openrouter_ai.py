@@ -59,6 +59,7 @@ def _resolve_model_for_task(task: str) -> str:
 	if settings.llm_provider == "groq":
 		if task == "file_summary":
 			return settings.groq_model_file_reasons
+		# flow_query and all other tasks → high-quality model
 		return settings.groq_model_summaries
 	return settings.openrouter_model
 

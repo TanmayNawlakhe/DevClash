@@ -295,5 +295,5 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
     finally:
         # On SUCCESS the clone is intentionally kept on disk.
         # clone_path is in the graph document — embedding_service.py
-        # reads full file content from it, then deletes it when done.
+        # and file-detail endpoints read full file content from it.
         pass

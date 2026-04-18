@@ -2,7 +2,7 @@ import { api, hasRepoApi } from './api'
 import { demoRepos } from '../lib/mockData'
 import { adaptRepoStatus } from '../lib/repoAdapters'
 import { sleep } from '../lib/utils'
-import type { Repo } from '../types'
+import type { EmbeddingStatus, Repo } from '../types'
 
 export async function fetchRepos(): Promise<Repo[]> {
   if (hasRepoApi()) {
@@ -68,4 +68,52 @@ export async function cancelRepoAnalysis(repoId: string) {
 export async function retryRepoAnalysis(repoId: string) {
   const { data } = await api.post<{ message: string } & Record<string, unknown>>(`/api/repos/${repoId}/retry`)
   return data
+}
+
+function adaptEmbeddingStatus(payload: any): EmbeddingStatus {
+  return {
+    repoId: payload.repo_id,
+    status: payload.status ?? 'unknown',
+    startedAt: payload.started_at ?? null,
+    completedAt: payload.completed_at ?? null,
+    errorMessage: payload.error_msg ?? null,
+    fileCount: payload.file_count ?? 0,
+    message: payload.message ?? '',
+  }
+}
+
+export async function startRepoEmbeddings(repoId: string): Promise<EmbeddingStatus> {
+  if (hasRepoApi()) {
+    const { data } = await api.post<any>(`/api/repos/${repoId}/embeddings`)
+    return adaptEmbeddingStatus(data)
+  }
+
+  await sleep(250)
+  return {
+    repoId,
+    status: 'processing',
+    fileCount: 0,
+    message: 'Embedding generation started.',
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    errorMessage: null,
+  }
+}
+
+export async function fetchRepoEmbeddingStatus(repoId: string): Promise<EmbeddingStatus> {
+  if (hasRepoApi()) {
+    const { data } = await api.get<any>(`/api/repos/${repoId}/embeddings/status`)
+    return adaptEmbeddingStatus(data)
+  }
+
+  await sleep(150)
+  return {
+    repoId,
+    status: 'not_started',
+    fileCount: 0,
+    message: 'No embedding job found.',
+    startedAt: null,
+    completedAt: null,
+    errorMessage: null,
+  }
 }

@@ -36,13 +36,35 @@ export function FlowDiagramModal({
 
   useEffect(() => {
     if (!result || !ref.current) return
-    renderMermaid(`flow-${result.diagramId}-${diagramType}`, result.mermaidSource, darkMode).then(({ svg }) => {
-      if (ref.current) ref.current.innerHTML = svg
-    })
+
+    let cancelled = false
+
+    renderMermaid(`flow-${result.diagramId}-${diagramType}`, result.mermaidSource, darkMode)
+      .then(({ svg }) => {
+        if (!cancelled && ref.current) {
+          ref.current.innerHTML = svg
+        }
+      })
+      .catch((error) => {
+        if (!cancelled && ref.current) {
+          ref.current.innerHTML = ''
+        }
+        toast.error(error instanceof Error ? error.message : 'Unable to render Mermaid diagram.')
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [darkMode, diagramType, result])
 
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title="Flow Diagram" className="w-[min(96vw,1180px)]">
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Flow Diagram"
+      description="Inspect the Mermaid diagram generated for the selected file set and read the plain-English walkthrough beside it."
+      className="w-[min(96vw,1180px)]"
+    >
       <div className="grid max-h-[78dvh] gap-4 overflow-hidden lg:grid-cols-[1.4fr_0.9fr]">
         <div className="overflow-hidden rounded-lg border border-border bg-background">
           <div className="flex gap-2 border-b border-border p-2">
