@@ -22,5 +22,25 @@ class Settings:
         "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
     )
 
+    # LLM provider selection: "groq" or "openrouter"
+    llm_provider: str = os.getenv("LLM_PROVIDER", "groq")
+
+    # Groq settings
+    groq_api_key: str = os.getenv("GROQ_API_KEY", "")
+    groq_api_url: str = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions")
+    groq_timeout_seconds: int = int(os.getenv("GROQ_TIMEOUT_SECONDS", "60"))
+    # Model for high-quality summaries/flow diagrams
+    groq_model_summaries: str = os.getenv("GROQ_MODEL_SUMMARIES", "llama-3.3-70b-versatile")
+    # Fast model for bulk per-file summaries
+    groq_model_file_reasons: str = os.getenv("GROQ_MODEL_FILE_REASONS", "llama-3.1-8b-instant")
+
+    # OpenRouter settings (fallback)
+    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    openrouter_api_url: str = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
+    openrouter_model: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+    openrouter_timeout_seconds: int = int(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "60"))
+    openrouter_site_url: str = os.getenv("OPENROUTER_SITE_URL", "")
+    openrouter_app_name: str = os.getenv("OPENROUTER_APP_NAME", "DevClash")
+
 
 settings = Settings()

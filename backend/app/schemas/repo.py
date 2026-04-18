@@ -60,3 +60,15 @@ class RepoFileDetailResponse(BaseModel):
     is_orphan: bool
     imports: list[str]
     dependents: list[str]
+
+
+class RepoFileSummary(BaseModel):
+    path: str
+    summary: str
+
+
+class RepoSummariesResponse(BaseModel):
+    repo_id: str
+    total_files: int
+    summarized_files: int
+    summaries: list[RepoFileSummary]

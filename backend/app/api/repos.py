@@ -10,10 +10,12 @@ from app.schemas.repo import (
     RepoActionResponse,
     RepoCreateRequest,
     RepoFileDetailResponse,
+    RepoFileSummary,
     RepoGraphResponse,
     RepoListResponse,
     RepoStatusResponse,
     RepoSubmitResponse,
+    RepoSummariesResponse,
 )
 from app.services.repo_analyzer import is_supported_github_url, normalize_github_url
 from app.services.repo_job_processor import enqueue_repo_job, remove_repo_job_from_queue
@@ -234,6 +236,74 @@ async def get_repo_graph(
         nodes=filtered_nodes,
         edges=filtered_edges,
         meta=meta,
+    )
+
+
+@router.get("/{repo_id}/summaries", response_model=RepoSummariesResponse)
+async def get_repo_summaries(repo_id: str) -> RepoSummariesResponse:
+    """Return the pre-computed AI file summaries for a completed repository.
+
+    Summaries are generated during the analysis job (while the repo is still
+    cloned on disk) and stored in the graph document.  This endpoint simply
+    reads them back — no AI calls are made at request time.
+    """
+    repo_object_id = _to_object_id(repo_id)
+    db = get_database()
+
+    logger.info("[summaries] Request received for repo_id=%s", repo_id)
+
+    repo_doc = await db["repos"].find_one({"_id": repo_object_id})
+    if not repo_doc:
+        logger.warning("[summaries] Repo %s not found", repo_id)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository analysis job not found",
+        )
+
+    if repo_doc.get("status") != "complete":
+        logger.warning(
+            "[summaries] Repo %s not complete yet (status=%s)",
+            repo_id,
+            repo_doc.get("status"),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Repository graph is not ready yet (status: {repo_doc.get('status')})",
+        )
+
+    graph_doc = await db["graphs"].find_one({"repo_id": repo_object_id})
+    if not graph_doc:
+        logger.warning("[summaries] Graph document missing for repo %s", repo_id)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Graph document was not found for this repository",
+        )
+
+    # Summaries were computed during the analysis job and stored in the graph doc
+    raw_summaries: list[dict] = graph_doc.get("summaries", [])
+    total_files: int = len(graph_doc.get("nodes", []))
+
+    logger.info(
+        "[summaries] Returning %d pre-computed summaries for repo %s (total files: %d)",
+        len(raw_summaries),
+        repo_id,
+        total_files,
+    )
+
+    summary_list = [
+        RepoFileSummary(
+            path=str(item.get("path", "")),
+            summary=str(item.get("summary", "")),
+        )
+        for item in raw_summaries
+        if item.get("path") and item.get("summary")
+    ]
+
+    return RepoSummariesResponse(
+        repo_id=repo_id,
+        total_files=total_files,
+        summarized_files=len(summary_list),
+        summaries=summary_list,
     )
 
 

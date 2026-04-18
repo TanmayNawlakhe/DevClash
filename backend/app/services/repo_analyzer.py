@@ -90,7 +90,16 @@ async def analyze_repository_graph(
     clone_base_dir: str,
     clone_timeout_seconds: int = 120,
     progress_callback: Callable[[str, int, str | None], Awaitable[None] | None] | None = None,
-) -> dict:
+) -> tuple[dict, Path]:
+    """Clone repo, parse dependencies, build graph.
+
+    Returns (graph_payload, clone_path). The caller is responsible for
+    deleting ``clone_path`` after it has finished using the files on disk
+    (e.g. after reading content for AI summarisation).
+
+    The clone is automatically deleted if an exception is raised inside this
+    function so callers never see a partial clone dir on failure.
+    """
     normalized_url = normalize_github_url(github_url)
     clone_url = f"{normalized_url}.git"
 
@@ -187,9 +196,13 @@ async def analyze_repository_graph(
 
         graph_payload = _build_graph_payload(files, edges)
         await _emit_progress(progress_callback, "complete", 100)
-        return graph_payload
-    finally:
+        # Return the clone path so the caller can read file content for AI
+        # summarisation before cleaning up the directory.
+        return graph_payload, repo_clone_path
+    except Exception:
+        # Only clean up on failure; success cleanup is the caller's job.
         shutil.rmtree(repo_clone_path, ignore_errors=True)
+        raise
 
 
 async def _emit_progress(

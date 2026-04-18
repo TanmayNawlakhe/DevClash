@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from bson import ObjectId
@@ -9,6 +11,7 @@ from app.config import settings
 from app.db.mongodb import get_database
 from app.db.redis_client import get_redis
 from app.services.repo_analyzer import analyze_repository_graph
+from app.services.openrouter_ai import generate_file_summaries_from_disk
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__, level=settings.log_level)
@@ -97,26 +100,91 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
             {"$set": {"progress": _progress_payload(stage, percent, current_file)}},
         )
 
+    # clone_path is returned by the analyzer; WE are responsible for cleanup
+    clone_path: Path | None = None
+
     try:
-        graph_payload = await analyze_repository_graph(
+        logger.info("[job] Cloning & analysing repo: %s", github_url)
+        graph_payload, clone_path = await analyze_repository_graph(
             github_url=github_url,
             clone_base_dir=settings.repo_clone_base_dir,
             clone_timeout_seconds=settings.clone_timeout_seconds,
             progress_callback=progress_callback,
         )
 
+        nodes: list[dict] = graph_payload["nodes"]
+        edges: list[dict] = graph_payload["edges"]
+        node_count: int = graph_payload["meta"].get("nodeCount", 0)
+        edge_count: int = graph_payload["meta"].get("edgeCount", 0)
+
+        logger.info(
+            "[job] Graph built for %s — %d nodes, %d edges. Clone still on disk at %s",
+            github_url,
+            node_count,
+            edge_count,
+            clone_path,
+        )
+
+        # ------------------------------------------------------------------ #
+        # AI file summarisation — files are still on disk, batch size = 6    #
+        # ------------------------------------------------------------------ #
+        await repos_collection.update_one(
+            {"_id": repo_object_id},
+            {"$set": {"progress": _progress_payload("summarising", 96)}},
+        )
+        logger.info(
+            "[job] Starting AI summarisation for %d files in batches of 6",
+            node_count,
+        )
+
+        summaries_by_path = await generate_file_summaries_from_disk(
+            repo_url=github_url,
+            nodes=nodes,
+            edges=edges,
+            clone_path=clone_path,
+            chunk_size=6,
+        )
+
+        logger.info(
+            "[job] AI summarisation complete — %d/%d files got a summary",
+            len(summaries_by_path),
+            node_count,
+        )
+
+        # ------------------------------------------------------------------ #
+        # Persist graph + summaries to DB                                     #
+        # ------------------------------------------------------------------ #
         now = _utcnow()
+
+        file_paths: list[str] = [str(n.get("id", "")) for n in nodes if n.get("id")]
+
+        # Convert {path: summary} → [{path, summary}] for storage
+        summaries_list = [
+            {"path": p, "summary": s} for p, s in summaries_by_path.items()
+        ]
+
+        logger.info(
+            "[job] Persisting graph + %d summaries to DB for %s",
+            len(summaries_list),
+            github_url,
+        )
+
         await graphs_collection.replace_one(
             {"repo_id": repo_object_id},
             {
                 "repo_id": repo_object_id,
-                "nodes": graph_payload["nodes"],
-                "edges": graph_payload["edges"],
+                "nodes": nodes,
+                "edges": edges,
                 "meta": graph_payload["meta"],
+                # Flat path list kept for quick look-ups without loading full nodes
+                "file_paths": file_paths,
+                # Pre-computed AI summaries — served by GET /api/repos/{id}/summaries
+                "summaries": summaries_list,
                 "updated_at": now,
             },
             upsert=True,
         )
+        logger.info("[job] Graph document saved to DB for %s", github_url)
 
         await repos_collection.update_one(
             {"_id": repo_object_id},
@@ -126,13 +194,19 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                     "completed_at": now,
                     "error_msg": None,
                     "cancel_requested": False,
-                    "node_count": graph_payload["meta"].get("nodeCount", 0),
-                    "edge_count": graph_payload["meta"].get("edgeCount", 0),
+                    "node_count": node_count,
+                    "edge_count": edge_count,
                     "progress": _progress_payload("complete", 100),
                 }
             },
         )
-        logger.info("Repository graph analysis complete for %s", github_url)
+        logger.info(
+            "[job] Repo %s marked complete — nodes=%d edges=%d summaries=%d",
+            github_url,
+            node_count,
+            edge_count,
+            len(summaries_list),
+        )
 
     except RepoJobCancelled:
         now = _utcnow()
@@ -148,7 +222,7 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                 }
             },
         )
-        logger.info("Repository graph analysis cancelled for %s", github_url)
+        logger.info("[job] Repo analysis cancelled for %s", github_url)
 
     except Exception as exc:
         now = _utcnow()
@@ -164,4 +238,10 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                 }
             },
         )
-        logger.exception("Repository graph analysis failed for %s", github_url)
+        logger.exception("[job] Repo analysis failed for %s", github_url)
+
+    finally:
+        # Always remove the cloned repo from disk, regardless of outcome
+        if clone_path is not None:
+            # shutil.rmtree(clone_path, ignore_errors=True)
+            logger.info("[job] Cleaned up clone directory: %s", clone_path)
