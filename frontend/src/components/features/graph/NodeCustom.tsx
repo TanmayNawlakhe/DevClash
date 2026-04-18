@@ -24,7 +24,7 @@ export function NodeCustom({ data, selected }: any) {
       content={
         <div className="space-y-1">
           <p className="font-mono">{data.path}</p>
-          <p>{data.summary.split('.')[0]}.</p>
+          <p className="max-w-xs whitespace-pre-line">{data.summary}</p>
           <p className="font-mono text-primary">centrality {Math.round(data.centrality * 100)}%</p>
         </div>
       }

@@ -85,7 +85,7 @@ export function FileDetailPanel() {
                 </div>
 
                 <div className="rounded-lg border-l-4 border-primary bg-accent/50 p-3">
-                  <p className="text-sm leading-6">{file.summary}</p>
+                  <p className="whitespace-pre-line text-sm leading-6">{file.summary}</p>
                 </div>
 
                 {file.priorityRank <= 8 ? (
@@ -170,7 +170,7 @@ function FileList({ files, icon }: { files: Array<{ id: string; path: string; su
           <span className="mt-0.5 text-primary">{icon}</span>
           <span>
             <span className="block font-mono text-sm">{truncatePath(file.path, 36)}</span>
-            <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{file.summary}</span>
+            <span className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">{file.summary}</span>
           </span>
         </button>
       ))}

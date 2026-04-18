@@ -246,11 +246,14 @@ async def generate_file_summaries_for_contexts(
 
 		user_payload = {
 			"repo_url": repo_url,
-			"task": "Generate concise architecture summaries for the listed files.",
+			"task": "Generate detailed architecture summaries for the listed files.",
 			"rules": [
 				"Use only the provided metadata and dependency links.",
 				"If uncertain, say appears/likely instead of asserting.",
-				"Each summary must be 1-2 sentences and under 40 words.",
+				"Each summary must be exactly 5-6 short lines.",
+				"Use newline characters between lines inside the summary string.",
+				"Keep each line focused on one concrete aspect such as purpose, role, dependencies, entry-point behavior, risks, or how the file fits into the repository.",
+				"Do not use markdown bullets, numbering, or headings inside the summary.",
 				"Return JSON only.",
 			],
 			"files": chunk,
@@ -258,7 +261,7 @@ async def generate_file_summaries_for_contexts(
 				"summaries": [
 					{
 						"path": "file path from allowed_paths",
-						"summary": "1-2 sentence plain-English summary",
+						"summary": "5-6 plain-English lines separated by \\n",
 					}
 				]
 			},
@@ -269,14 +272,15 @@ async def generate_file_summaries_for_contexts(
 			{
 				"role": "system",
 				"content": (
-					"You are a senior software architect. Produce precise, cautious summaries for files "
-					"using only the supplied metadata. Return strict JSON with key 'summaries'."
+					"You are a senior software architect. Produce precise, cautious multi-line summaries for files "
+					"using only the supplied metadata. Each summary must contain 5-6 short lines separated by newline "
+					"characters inside the JSON string. Return strict JSON with key 'summaries'."
 				),
 			},
 			{"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
 		]
 
-		parsed = await _call_ai_provider(messages=messages, max_tokens=1000, task="file_summary")
+		parsed = await _call_ai_provider(messages=messages, max_tokens=2200, task="file_summary")
 
 		items = parsed.get("summaries", [])
 		if not isinstance(items, list):
@@ -456,19 +460,22 @@ async def generate_file_summaries_from_disk(
 		user_payload = {
 			"repo_url": repo_url,
 			"task": (
-				"Generate a concise, individual summary for each file listed below. "
+				"Generate a detailed, individual summary for each file listed below. "
 				"Use the actual source code provided under 'content' as the primary signal."
 			),
 			"rules": [
 				"Read the 'content' field for each file to understand what it does.",
-				"Each summary must be 1-2 sentences and under 40 words.",
+				"Each summary must be exactly 5-6 short lines.",
+				"Use newline characters between lines inside the summary string.",
+				"Keep each line focused on one concrete aspect such as purpose, role, dependencies, entry-point behavior, risks, or how the file fits into the repository.",
+				"Do not use markdown bullets, numbering, or headings inside the summary.",
 				"If content is empty, fall back to filename, language, and dependency metadata.",
 				"Return strict JSON only — no markdown fences.",
 			],
 			"files": chunk,
 			"response_format": {
 				"summaries": [
-					{"path": "<exact path>", "summary": "<1-2 sentence summary>"}
+					{"path": "<exact path>", "summary": "<5-6 lines separated by \\n>"}
 				]
 			},
 			"allowed_paths": allowed_paths,
@@ -488,7 +495,7 @@ async def generate_file_summaries_from_disk(
 
 		try:
 			parsed = await _call_ai_provider(
-				messages=messages, max_tokens=1200, task="file_summary"
+				messages=messages, max_tokens=2600, task="file_summary"
 			)
 		except OpenRouterError as ai_err:
 			logger.error(

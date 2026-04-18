@@ -56,7 +56,7 @@ export function NLQueryPanel({ open, onOpenChange, repoId }: { open: boolean; on
                 <span className="font-mono text-sm">{result.path}</span>
                 <span className="font-mono text-xs text-primary">{Math.round(result.score * 100)}%</span>
               </div>
-              <p className="mt-2 text-sm text-muted-foreground">{result.snippet}</p>
+              <p className="mt-2 whitespace-pre-line text-sm text-muted-foreground">{result.snippet}</p>
             </div>
           ))}
         </div>
