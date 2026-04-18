@@ -29,7 +29,7 @@ export function FileDetailPanel() {
 
   const query = useQuery({
     queryKey: ['file-detail', repo?.id, selectedNodeId],
-    queryFn: () => fetchFileDetail(repo?.id ?? graph?.meta.repoId ?? 'react-demo', selectedNodeId ?? 'f2'),
+    queryFn: () => fetchFileDetail(repo?.id ?? graph?.meta.repoId ?? 'react-demo', selectedNodeId ?? 'f2', graph),
     enabled: Boolean(selectedNodeId && activePanel === 'file'),
   })
 

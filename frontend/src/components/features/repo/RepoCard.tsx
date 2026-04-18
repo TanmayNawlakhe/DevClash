@@ -43,7 +43,7 @@ export function RepoCard({ repo, onClick }: { repo: Repo; onClick: () => void })
 
       {/* Language badges */}
       <div className="mt-4 flex flex-wrap gap-1.5">
-        {repo.languages.map((lang) => (
+        {(repo.languages.length ? repo.languages : ['Pending']).map((lang) => (
           <Badge key={lang} className="rounded-full px-2.5 py-0.5 text-xs">{lang}</Badge>
         ))}
       </div>

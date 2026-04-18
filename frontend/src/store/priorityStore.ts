@@ -8,6 +8,7 @@ interface PriorityState {
   isReady: boolean
   toggleChecked: (fileId: string) => void
   setRankings: (rankings: PriorityEntry[]) => void
+  resetChecked: () => void
 }
 
 export const usePriorityStore = create<PriorityState>((set) => ({
@@ -22,4 +23,5 @@ export const usePriorityStore = create<PriorityState>((set) => ({
       return { checkedFileIds }
     }),
   setRankings: (rankings) => set({ rankings, isReady: true }),
+  resetChecked: () => set({ checkedFileIds: new Set() }),
 }))

@@ -2,10 +2,13 @@ import type { Edge, Node } from '@xyflow/react'
 
 export type AnalysisStatus =
   | 'idle'
+  | 'pending'
   | 'cloning'
   | 'parsing'
   | 'analyzing'
   | 'ai_processing'
+  | 'cancelling'
+  | 'cancelled'
   | 'complete'
   | 'failed'
 
@@ -32,6 +35,15 @@ export interface Repo {
   edges: number
   status: AnalysisStatus
   lastAnalyzed: string
+  createdAt?: string
+  completedAt?: string | null
+  errorMessage?: string | null
+  progress?: {
+    stage: string
+    percent: number
+    currentFile?: string | null
+    updatedAt?: string | null
+  } | null
 }
 
 export type Layer =

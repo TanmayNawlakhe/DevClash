@@ -8,7 +8,7 @@ import { Select } from '../../components/ui/Select'
 import { useDebounce } from '../../hooks/useDebounce'
 import { useRepoStore } from '../../store/repoStore'
 
-const STATUS_FILTERS = ['all', 'complete', 'analyzing', 'failed']
+const STATUS_FILTERS = ['all', 'pending', 'analyzing', 'cancelling', 'cancelled', 'complete', 'failed']
 
 export function RepoHistory() {
   const repos = useRepoStore((state) => state.repos)

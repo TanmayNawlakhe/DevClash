@@ -39,7 +39,7 @@ export function LayerBadge({ layer, className }: { layer: Layer; className?: str
 }
 
 export function StatusBadge({ status }: { status: AnalysisStatus }) {
-  const isActive = ['cloning', 'parsing', 'analyzing', 'ai_processing'].includes(status)
+  const isActive = ['pending', 'cloning', 'parsing', 'analyzing', 'ai_processing', 'cancelling'].includes(status)
   if (status === 'complete') {
     return (
       <Badge tone="success">
@@ -50,6 +50,15 @@ export function StatusBadge({ status }: { status: AnalysisStatus }) {
   }
 
   if (status === 'failed') {
+    return (
+      <Badge tone="destructive">
+        <XCircle className="size-3" />
+        {STATUS_LABELS[status]}
+      </Badge>
+    )
+  }
+
+  if (status === 'cancelled') {
     return (
       <Badge tone="destructive">
         <XCircle className="size-3" />

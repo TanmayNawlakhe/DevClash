@@ -1,5 +1,3 @@
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-
 const data = [
   { day: 'Mon', repos: 2 },
   { day: 'Tue', repos: 4 },
@@ -10,7 +8,42 @@ const data = [
   { day: 'Sun', repos: 9 },
 ]
 
+const CHART_WIDTH = 620
+const CHART_HEIGHT = 220
+const PADDING_X = 34
+const PADDING_TOP = 12
+const PADDING_BOTTOM = 30
+const MAX_REPOS = Math.max(...data.map((entry) => entry.repos), 1)
+
+function pointX(index: number) {
+  const innerWidth = CHART_WIDTH - PADDING_X * 2
+  if (data.length <= 1) return PADDING_X
+  return PADDING_X + (index / (data.length - 1)) * innerWidth
+}
+
+function pointY(value: number) {
+  const innerHeight = CHART_HEIGHT - PADDING_TOP - PADDING_BOTTOM
+  const ratio = value / MAX_REPOS
+  return PADDING_TOP + (1 - ratio) * innerHeight
+}
+
+function buildLinePath() {
+  return data
+    .map((entry, index) => `${index === 0 ? 'M' : 'L'} ${pointX(index)} ${pointY(entry.repos)}`)
+    .join(' ')
+}
+
+function buildAreaPath() {
+  const firstX = pointX(0)
+  const lastX = pointX(data.length - 1)
+  const baselineY = CHART_HEIGHT - PADDING_BOTTOM
+  return `${buildLinePath()} L ${lastX} ${baselineY} L ${firstX} ${baselineY} Z`
+}
+
 export function AnalysisStatsChart() {
+  const linePath = buildLinePath()
+  const areaPath = buildAreaPath()
+
   return (
     <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
       <div className="mb-5 flex items-center justify-between">
@@ -23,48 +56,48 @@ export function AnalysisStatsChart() {
         </span>
       </div>
       <div className="h-52">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-            <defs>
-              <linearGradient id="GittsuriArea" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="5%" stopColor="oklch(0.50 0.22 265)" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="oklch(0.50 0.22 265)" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <XAxis
-              dataKey="day"
-              stroke="var(--muted-foreground)"
-              tickLine={false}
-              axisLine={false}
-              tick={{ fontSize: 11 }}
-            />
-            <YAxis
-              stroke="var(--muted-foreground)"
-              tickLine={false}
-              axisLine={false}
-              tick={{ fontSize: 11 }}
-            />
-            <Tooltip
-              contentStyle={{
-                background: 'var(--popover)',
-                border: '1px solid var(--border)',
-                borderRadius: '12px',
-                boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
-                fontSize: 12,
-              }}
-              cursor={{ stroke: 'var(--primary)', strokeWidth: 1, strokeDasharray: '4 4' }}
-            />
-            <Area
-              type="monotone"
-              dataKey="repos"
-              stroke="oklch(0.50 0.22 265)"
-              fill="url(#GittsuriArea)"
-              strokeWidth={2.5}
-              dot={{ fill: 'oklch(0.50 0.22 265)', r: 3 }}
-              activeDot={{ r: 5, fill: 'oklch(0.50 0.22 265)' }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+        <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} className="h-full w-full" role="img" aria-label="Analysis velocity trend">
+          <defs>
+            <linearGradient id="gittsuriArea" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="5%" stopColor="oklch(0.50 0.22 265)" stopOpacity="0.30" />
+              <stop offset="95%" stopColor="oklch(0.50 0.22 265)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+
+          {[0.25, 0.5, 0.75].map((ratio) => {
+            const y = PADDING_TOP + ratio * (CHART_HEIGHT - PADDING_TOP - PADDING_BOTTOM)
+            return (
+              <line
+                key={ratio}
+                x1={PADDING_X}
+                y1={y}
+                x2={CHART_WIDTH - PADDING_X}
+                y2={y}
+                stroke="color-mix(in oklch, var(--border) 70%, white)"
+                strokeDasharray="4 6"
+              />
+            )
+          })}
+
+          <path d={areaPath} fill="url(#gittsuriArea)" />
+          <path d={linePath} fill="none" stroke="oklch(0.50 0.22 265)" strokeWidth="2.5" strokeLinecap="round" />
+
+          {data.map((entry, index) => (
+            <g key={entry.day}>
+              <circle cx={pointX(index)} cy={pointY(entry.repos)} r="3.5" fill="oklch(0.50 0.22 265)" />
+              <text
+                x={pointX(index)}
+                y={CHART_HEIGHT - 10}
+                textAnchor="middle"
+                fontSize="11"
+                fill="var(--muted-foreground)"
+                fontFamily="var(--font-mono)"
+              >
+                {entry.day}
+              </text>
+            </g>
+          ))}
+        </svg>
       </div>
     </div>
   )

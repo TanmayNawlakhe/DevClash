@@ -6,11 +6,11 @@ import { toast } from 'sonner'
 import { z } from 'zod'
 import { Button } from '../../ui/Button'
 import { githubUrlSchema } from '../../../lib/validators'
-import { demoGraph } from '../../../lib/mockData'
+import { describeRepoProgress } from '../../../lib/repoAdapters'
 import { submitRepoAnalysis } from '../../../services/repoService'
 import { useAuthStore } from '../../../store/authStore'
 import { useRepoStore } from '../../../store/repoStore'
-import { cn, sleep } from '../../../lib/utils'
+import { cn } from '../../../lib/utils'
 
 const schema = z.object({ githubUrl: githubUrlSchema })
 
@@ -36,7 +36,9 @@ export function RepoUrlInput({ compact = false, inverted = false }: { compact?: 
     try {
       const repo = await submitRepoAnalysis(values.githubUrl)
       addRepo(repo)
-      setGraphData({ ...demoGraph, meta: { ...demoGraph.meta, repoId: repo.id } })
+      setGraphData(null)
+      const progress = describeRepoProgress(repo)
+      setAnalysisStatus(progress.status, progress.progress, progress.stage, progress.log)
       toast.success('Analysis started. Mapping in progress...')
 
       const destination = `/analysis/${repo.id}`
@@ -46,7 +48,6 @@ export function RepoUrlInput({ compact = false, inverted = false }: { compact?: 
       }
 
       navigate(destination)
-      void simulateAnalysis(setAnalysisStatus)
     } catch {
       toast.error(errors.githubUrl?.message ?? 'Could not start analysis.')
     }
@@ -118,21 +119,4 @@ export function RepoUrlInput({ compact = false, inverted = false }: { compact?: 
       ) : null}
     </div>
   )
-}
-
-async function simulateAnalysis(
-  setAnalysisStatus: (status: any, progress: number, stage: string, log?: string) => void,
-) {
-  const steps = [
-    ['cloning', 14, 'Cloning repository...', 'git clone --depth=1 completed'],
-    ['parsing', 36, 'Parsing TypeScript files...', 'Parsed 142 TypeScript files'],
-    ['analyzing', 58, 'Computing dependency graph...', 'Built 128 nodes and 421 edges'],
-    ['ai_processing', 82, 'Running AI analysis...', 'Generated ownership and priority signals'],
-    ['complete', 100, 'Architecture map ready', 'Analysis complete'],
-  ] as const
-
-  for (const step of steps) {
-    setAnalysisStatus(step[0], step[1], step[2], step[3])
-    await sleep(560)
-  }
 }

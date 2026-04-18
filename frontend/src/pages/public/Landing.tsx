@@ -655,128 +655,159 @@ function GraphMockup() {
   )
 }
 
-// ── Inverted dependency tree with pulsating nodes ──────────────────────────
-const TREE_NODES: Array<{ x: number; y: number; r: number; delay: number; level: number }> = [
-  // root
-  { x: 250, y: 30,  r: 9,   delay: 0,    level: 0 },
-  // level 1
-  { x: 100, y: 108, r: 7,   delay: 0.20, level: 1 },
-  { x: 250, y: 108, r: 7,   delay: 0.55, level: 1 },
-  { x: 400, y: 108, r: 7,   delay: 0.90, level: 1 },
-  // level 2
-  { x: 42,  y: 196, r: 5.5, delay: 0.35, level: 2 },
-  { x: 158, y: 196, r: 5.5, delay: 0.75, level: 2 },
-  { x: 215, y: 196, r: 5.5, delay: 1.10, level: 2 },
-  { x: 288, y: 196, r: 5.5, delay: 0.45, level: 2 },
-  { x: 350, y: 196, r: 5.5, delay: 0.95, level: 2 },
-  { x: 455, y: 196, r: 5.5, delay: 0.65, level: 2 },
-  // level 3
-  { x: 18,  y: 282, r: 4,   delay: 0.60, level: 3 },
-  { x: 68,  y: 282, r: 4,   delay: 1.30, level: 3 },
-  { x: 148, y: 282, r: 4,   delay: 0.85, level: 3 },
-  { x: 200, y: 282, r: 4,   delay: 0.25, level: 3 },
-  { x: 255, y: 282, r: 4,   delay: 1.55, level: 3 },
-  { x: 310, y: 282, r: 4,   delay: 0.70, level: 3 },
-  { x: 360, y: 282, r: 4,   delay: 1.05, level: 3 },
-  { x: 418, y: 282, r: 4,   delay: 0.40, level: 3 },
-  { x: 470, y: 282, r: 4,   delay: 1.00, level: 3 },
-  // level 4 (leaves)
-  { x: 10,  y: 366, r: 3,   delay: 0.80, level: 4 },
-  { x: 42,  y: 366, r: 3,   delay: 1.40, level: 4 },
-  { x: 82,  y: 366, r: 3,   delay: 0.50, level: 4 },
-  { x: 138, y: 366, r: 3,   delay: 1.65, level: 4 },
-  { x: 240, y: 366, r: 3,   delay: 0.75, level: 4 },
-  { x: 272, y: 366, r: 3,   delay: 1.20, level: 4 },
-  { x: 345, y: 366, r: 3,   delay: 0.55, level: 4 },
-  { x: 400, y: 366, r: 3,   delay: 1.50, level: 4 },
-  { x: 435, y: 366, r: 3,   delay: 0.30, level: 4 },
-  { x: 476, y: 366, r: 3,   delay: 1.80, level: 4 },
+// ── Inverted dependency tree with file-name boxes ─────────────────────────
+const FILE_NODES = [
+  { id: 0, x: 250, y: 32,  label: 'index.tsx',    level: 0, delay: 0    },
+  { id: 1, x: 92,  y: 112, label: 'router.tsx',   level: 1, delay: 0.40 },
+  { id: 2, x: 250, y: 112, label: 'GraphCanvas',  level: 1, delay: 0.60 },
+  { id: 3, x: 408, y: 112, label: 'apiService',   level: 1, delay: 0.80 },
+  { id: 4, x: 42,  y: 200, label: 'AppShell',     level: 2, delay: 0.95 },
+  { id: 5, x: 125, y: 200, label: 'Layout',       level: 2, delay: 1.10 },
+  { id: 6, x: 208, y: 200, label: 'graphStore',   level: 2, delay: 1.25 },
+  { id: 7, x: 292, y: 200, label: 'NodeCustom',   level: 2, delay: 1.40 },
+  { id: 8, x: 375, y: 200, label: 'repoService',  level: 2, delay: 1.55 },
+  { id: 9, x: 458, y: 200, label: 'types.ts',     level: 2, delay: 1.70 },
 ]
 
-const TREE_EDGES: [number, number, number, number][] = [
-  // root → L1
-  [250,30, 100,108], [250,30, 250,108], [250,30, 400,108],
-  // L1a → L2
-  [100,108, 42,196], [100,108, 158,196],
-  // L1b → L2
-  [250,108, 215,196], [250,108, 288,196],
-  // L1c → L2
-  [400,108, 350,196], [400,108, 455,196],
-  // L2 → L3
-  [42,196, 18,282], [42,196, 68,282],
-  [158,196, 148,282],
-  [215,196, 200,282],
-  [288,196, 255,282], [288,196, 310,282],
-  [350,196, 360,282],
-  [455,196, 418,282], [455,196, 470,282],
-  // L3 → L4
-  [18,282, 10,366], [18,282, 42,366],
-  [68,282, 82,366],
-  [148,282, 138,366],
-  [255,282, 240,366], [255,282, 272,366],
-  [360,282, 345,366],
-  [418,282, 400,366], [418,282, 435,366],
-  [470,282, 476,366],
+const FILE_EDGES = [
+  { d: 'M250,32 C250,72 92,72 92,112',      delay: 0.18 },
+  { d: 'M250,32 C250,72 250,72 250,112',    delay: 0.23 },
+  { d: 'M250,32 C250,72 408,72 408,112',    delay: 0.28 },
+  { d: 'M92,112 C92,156 42,156 42,200',     delay: 0.68 },
+  { d: 'M92,112 C92,156 125,156 125,200',   delay: 0.73 },
+  { d: 'M250,112 C250,156 208,156 208,200', delay: 0.88 },
+  { d: 'M250,112 C250,156 292,156 292,200', delay: 0.93 },
+  { d: 'M408,112 C408,156 375,156 375,200', delay: 1.08 },
+  { d: 'M408,112 C408,156 458,156 458,200', delay: 1.13 },
 ]
 
-// Opacity stepped by level — root is darkest/most opaque, leaves lightest
-const LEVEL_OPACITY = [1, 0.88, 0.75, 0.62, 0.50]
+const BOX_CFG = [
+  { w: 100, h: 28, rx: 8, fontSize: 12   },
+  { w:  90, h: 25, rx: 7, fontSize: 11   },
+  { w:  74, h: 22, rx: 6, fontSize: 10   },
+]
 
 function InvertedTree() {
   return (
     <div className="relative h-full w-full">
       <svg
-        viewBox="0 0 500 400"
+        viewBox="0 0 500 250"
         className="h-full w-full"
         preserveAspectRatio="xMidYMid meet"
         style={{ overflow: 'visible' }}
       >
-        {/* Branch lines — use primary CSS var via style */}
-        {TREE_EDGES.map(([x1, y1, x2, y2], i) => {
-          const cx = (x1 + x2) / 2
-          const cy = y1 + (y2 - y1) * 0.38
+        <defs>
+          <filter id="hero-glow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+
+        {/* Edges — draw themselves along the path */}
+        {FILE_EDGES.map((edge, i) => (
+          <motion.path
+            key={i}
+            d={edge.d}
+            stroke="var(--primary)"
+            strokeWidth="1.5"
+            strokeOpacity="0.28"
+            fill="none"
+            strokeLinecap="round"
+            initial={{ pathLength: 0, opacity: 0 }}
+            animate={{ pathLength: 1, opacity: 1 }}
+            transition={{ delay: edge.delay, duration: 0.5, ease: 'easeOut' }}
+          />
+        ))}
+
+        {/* File-name box nodes */}
+        {FILE_NODES.map((node) => {
+          const cfg = BOX_CFG[node.level]
+          const isRoot = node.level === 0
+          const isL1   = node.level === 1
+          const hw = cfg.w / 2
+          const hh = cfg.h / 2
           return (
-            <path
-              key={i}
-              d={`M${x1},${y1} C${cx},${cy} ${cx},${y2 - (y2 - y1) * 0.38} ${x2},${y2}`}
-              style={{ stroke: 'var(--primary)', opacity: 0.22 }}
-              strokeWidth="1.5"
-              fill="none"
-              strokeLinecap="round"
-            />
+            <motion.g
+              key={node.id}
+              initial={{ opacity: 0, scale: 0.55 }}
+              animate={{ opacity: 1, scale: 1 }}
+              style={{ transformOrigin: `${node.x}px ${node.y}px` }}
+              transition={{
+                delay: node.delay,
+                duration: 0.45,
+                type: 'spring',
+                stiffness: 280,
+                damping: 22,
+              }}
+            >
+              {/* Halo glow behind root */}
+              {isRoot && (
+                <rect
+                  x={node.x - hw - 5} y={node.y - hh - 5}
+                  width={cfg.w + 10} height={cfg.h + 10}
+                  rx={cfg.rx + 4}
+                  fill="var(--primary)" fillOpacity="0.14"
+                  style={{ filter: 'blur(7px)' }}
+                />
+              )}
+
+              {/* Box */}
+              <rect
+                x={node.x - hw} y={node.y - hh}
+                width={cfg.w} height={cfg.h}
+                rx={cfg.rx}
+                fill="white"
+                fillOpacity={isRoot ? 1 : isL1 ? 0.94 : 0.88}
+                stroke={isRoot ? 'var(--primary)' : 'var(--border)'}
+                strokeWidth={isRoot ? 1.5 : 1}
+                filter={isRoot ? 'url(#hero-glow)' : undefined}
+              />
+
+              {/* Tinted overlay for root */}
+              {isRoot && (
+                <rect
+                  x={node.x - hw} y={node.y - hh}
+                  width={cfg.w} height={cfg.h}
+                  rx={cfg.rx}
+                  fill="var(--primary)" fillOpacity="0.07"
+                />
+              )}
+
+              {/* File-type dot */}
+              <circle
+                cx={node.x - hw + 10} cy={node.y}
+                r={isRoot ? 3 : 2.5}
+                fill={isRoot ? 'var(--primary)' : '#94a3b8'}
+                fillOpacity={isRoot ? 1 : 0.65}
+              />
+
+              {/* Label */}
+              <text
+                x={node.x - hw + 19}
+                y={node.y + cfg.fontSize * 0.36}
+                fill={isRoot ? 'var(--primary)' : 'var(--foreground)'}
+                fontSize={cfg.fontSize}
+                fontFamily="ui-monospace, 'Cascadia Code', Menlo, monospace"
+                fontWeight={isRoot ? 600 : 400}
+                fillOpacity={isRoot ? 1 : isL1 ? 0.85 : 0.70}
+              >
+                {node.label}
+              </text>
+            </motion.g>
           )
         })}
 
-        {/* Nodes */}
-        {TREE_NODES.map((node, i) => (
-          <g key={i}>
-            {/* Pulsing outer ring */}
-            <motion.circle
-              cx={node.x}
-              cy={node.y}
-              r={node.r + 4}
-              fill="none"
-              style={{ stroke: 'var(--primary)' }}
-              animate={{
-                r: [node.r + 3, node.r + 12, node.r + 3],
-                strokeOpacity: [LEVEL_OPACITY[node.level] * 0.6, 0, LEVEL_OPACITY[node.level] * 0.6],
-              }}
-              transition={{ duration: 2.6, delay: node.delay, repeat: Infinity, ease: 'easeInOut' }}
-            />
-            {/* Core filled node */}
-            <motion.circle
-              cx={node.x}
-              cy={node.y}
-              r={node.r}
-              style={{ fill: 'var(--primary)' }}
-              animate={{
-                r: [node.r, node.r * 1.14, node.r],
-                fillOpacity: [LEVEL_OPACITY[node.level] * 0.8, LEVEL_OPACITY[node.level], LEVEL_OPACITY[node.level] * 0.8],
-              }}
-              transition={{ duration: 2.6, delay: node.delay, repeat: Infinity, ease: 'easeInOut' }}
-            />
-          </g>
-        ))}
+        {/* Pulsing outer ring on root — starts after entry animation */}
+        <motion.rect
+          x={250 - 57} y={32 - 19}
+          width={114} height={38}
+          rx={12}
+          fill="none"
+          stroke="var(--primary)"
+          strokeWidth="1"
+          animate={{ strokeOpacity: [0.45, 0, 0.45] }}
+          transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut', delay: 1.4 }}
+        />
       </svg>
     </div>
   )

@@ -13,6 +13,7 @@ export const LAYER_COLORS: Record<Layer, { bg: string; text: string; hex: string
 export const VIEW_MODES: ViewMode[] = ['dependency', 'ownership', 'priority']
 
 export const ANALYSIS_STAGES: Array<{ key: AnalysisStatus; label: string }> = [
+  { key: 'pending', label: 'Queued' },
   { key: 'cloning', label: 'Cloning Repository' },
   { key: 'parsing', label: 'Parsing Files' },
   { key: 'analyzing', label: 'Building Graph' },
@@ -24,10 +25,13 @@ export const LANGUAGES = ['TypeScript', 'JavaScript', 'Python', 'Go'] as const
 
 export const STATUS_LABELS: Record<AnalysisStatus, string> = {
   idle: 'Idle',
+  pending: 'Queued',
   cloning: 'Cloning',
   parsing: 'Parsing',
   analyzing: 'Analyzing',
   ai_processing: 'AI Processing',
+  cancelling: 'Cancelling',
+  cancelled: 'Cancelled',
   complete: 'Complete',
   failed: 'Failed',
 }

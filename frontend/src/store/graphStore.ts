@@ -29,7 +29,7 @@ const defaultFilters: FilterState = {
 
 export const useGraphStore = create<GraphState>((set) => ({
   viewMode: 'dependency',
-  layoutMode: 'force',
+  layoutMode: 'hierarchical',
   selectedNodeId: null,
   selectedNodeIds: [],
   hoveredNodeId: null,

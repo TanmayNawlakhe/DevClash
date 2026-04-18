@@ -1,6 +1,4 @@
 import {
-  Background,
-  BackgroundVariant,
   MarkerType,
   Panel,
   ReactFlow,
@@ -11,7 +9,7 @@ import {
 } from '@xyflow/react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Menu, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GraphToolbar } from './GraphToolbar'
 import { GraphMinimap } from './GraphMinimap'
 import { NodeCustom } from './NodeCustom'
@@ -54,9 +52,10 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
   const [queryOpen, setQueryOpen] = useState(false)
   const [flowOpen, setFlowOpen] = useState(false)
   const [toolbarOpen, setToolbarOpen] = useState(false)
+  const [isViewportMoving, setIsViewportMoving] = useState(false)
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
-  const blastMap = useBlastRadius(hoveredNodeId, graph.edges, blastRadiusEnabled)
+  const blastMap = useBlastRadius(hoveredNodeId, graph.edges, blastRadiusEnabled && !isViewportMoving)
 
   const filteredGraph = useMemo(() => {
     const search = filters.search.toLowerCase()
@@ -76,24 +75,121 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
     }
   }, [filters, graph])
 
+  const baseFlowNodes = useMemo(
+    () => mapToFlowNodes(filteredGraph, viewMode, layoutMode),
+    [filteredGraph, layoutMode, viewMode],
+  )
+
+  const baseFlowEdges = useMemo(
+    () => mapToFlowEdges(filteredGraph.edges),
+    [filteredGraph.edges],
+  )
+
+  const layoutStabilityKey = useMemo(
+    () => `${layoutMode}|${viewMode}|${filteredGraph.nodes.map((node) => node.id).join(',')}|${filteredGraph.edges.map((edge) => edge.id).join(',')}`,
+    [filteredGraph.edges, filteredGraph.nodes, layoutMode, viewMode],
+  )
+
+  const lastLayoutKeyRef = useRef(layoutStabilityKey)
+
+  const hoverEdgeDepthMap = useMemo(() => {
+    if (!hoveredNodeId || !blastRadiusEnabled || isViewportMoving) return new Map<string, number>()
+
+    const incomingByTarget = new Map<string, typeof filteredGraph.edges>()
+    const outgoingBySource = new Map<string, typeof filteredGraph.edges>()
+
+    filteredGraph.edges.forEach((edge) => {
+      const incoming = incomingByTarget.get(edge.target) ?? []
+      incoming.push(edge)
+      incomingByTarget.set(edge.target, incoming)
+
+      const outgoing = outgoingBySource.get(edge.source) ?? []
+      outgoing.push(edge)
+      outgoingBySource.set(edge.source, outgoing)
+    })
+
+    const edgeDepth = new Map<string, number>()
+    const nodeDepth = new Map<string, number>([[hoveredNodeId, 0]])
+    const queue: string[] = [hoveredNodeId]
+    const maxDepth = 3
+
+    while (queue.length) {
+      const currentId = queue.shift()!
+      const currentDepth = nodeDepth.get(currentId) ?? 0
+      if (currentDepth >= maxDepth) continue
+
+      const traverse = (edgeId: string, neighborNodeId: string) => {
+        const nextDepth = currentDepth + 1
+        const existingEdgeDepth = edgeDepth.get(edgeId)
+        if (existingEdgeDepth === undefined || nextDepth < existingEdgeDepth) {
+          edgeDepth.set(edgeId, nextDepth)
+        }
+
+        const existingNodeDepth = nodeDepth.get(neighborNodeId)
+        if (existingNodeDepth === undefined || nextDepth < existingNodeDepth) {
+          nodeDepth.set(neighborNodeId, nextDepth)
+          queue.push(neighborNodeId)
+        }
+      }
+
+      ;(incomingByTarget.get(currentId) ?? []).forEach((edge) => {
+        traverse(edge.id, edge.source)
+      })
+
+      ;(outgoingBySource.get(currentId) ?? []).forEach((edge) => {
+        traverse(edge.id, edge.target)
+      })
+    }
+
+    return edgeDepth
+  }, [blastRadiusEnabled, filteredGraph.edges, hoveredNodeId, isViewportMoving])
+
   useEffect(() => {
-    const nextNodes = mapToFlowNodes(filteredGraph, viewMode, layoutMode).map((node) => ({
+    const shouldResetLayout = lastLayoutKeyRef.current !== layoutStabilityKey
+
+    const nextNodes = baseFlowNodes.map((node) => ({
       ...node,
       data: { ...node.data, blastDepth: blastMap.get(node.id) },
       hidden: selectedContributor ? node.data.primaryOwner !== selectedContributor : false,
     }))
-    const nextEdges = mapToFlowEdges(filteredGraph.edges).map((edge) => ({
+    const nextEdges = baseFlowEdges.map((edge) => ({
       ...edge,
+      data: {
+        ...edge.data,
+        pathDepth: hoverEdgeDepthMap.get(edge.id),
+      },
       markerEnd: {
         type: MarkerType.ArrowClosed,
         width: 18,
         height: 18,
-        color: 'color-mix(in oklch, var(--primary) 60%, var(--border))',
+        color: hoverEdgeDepthMap.has(edge.id)
+          ? 'color-mix(in oklch, var(--primary) 78%, white)'
+          : 'color-mix(in oklch, var(--primary) 60%, var(--border))',
       },
     }))
-    setNodes(nextNodes)
+
+    setNodes((currentNodes) => {
+      if (shouldResetLayout) {
+        return nextNodes
+      }
+
+      const currentNodeMap = new Map(currentNodes.map((node) => [node.id, node]))
+
+      return nextNodes.map((node) => {
+        const currentNode = currentNodeMap.get(node.id)
+        if (!currentNode) return node
+
+        return {
+          ...node,
+          position: currentNode.position,
+        }
+      })
+    })
+
     setEdges(nextEdges)
-  }, [blastMap, filteredGraph, layoutMode, selectedContributor, setEdges, setNodes, viewMode])
+
+    lastLayoutKeyRef.current = layoutStabilityKey
+  }, [baseFlowEdges, baseFlowNodes, blastMap, hoverEdgeDepthMap, layoutStabilityKey, selectedContributor, setEdges, setNodes])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => fitView({ padding: 0.24, duration: 700 }), 80)
@@ -121,7 +217,7 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
   )
 
   return (
-    <div className="canvas-shell premium-grid relative h-full min-h-[640px] overflow-hidden rounded-lg border border-border bg-background">
+    <div className="canvas-shell relative h-full min-h-160 overflow-hidden rounded-lg border border-border bg-white">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -130,8 +226,19 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
-        onNodeMouseEnter={(_, node) => setHoveredNode(node.id)}
-        onNodeMouseLeave={() => setHoveredNode(null)}
+        onNodeMouseEnter={(_, node) => {
+          if (isViewportMoving) return
+          setHoveredNode(node.id)
+        }}
+        onNodeMouseLeave={() => {
+          if (isViewportMoving) return
+          setHoveredNode(null)
+        }}
+        onMoveStart={() => {
+          setIsViewportMoving(true)
+          setHoveredNode(null)
+        }}
+        onMoveEnd={() => setIsViewportMoving(false)}
         onSelectionChange={({ nodes }) => setSelectedNodes(nodes.map((node) => node.id))}
         proOptions={{ hideAttribution: true }}
         selectionOnDrag
@@ -148,13 +255,6 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
         minZoom={0.25}
         maxZoom={1.7}
       >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={22}
-          size={1.2}
-          color="color-mix(in oklch, var(--primary) 22%, transparent)"
-        />
-
         {/* ── Hamburger button + sliding toolbar panel ── */}
         <Panel position="top-left">
           <div className="relative flex flex-col gap-2">

@@ -1,9 +1,9 @@
 import { useOwnershipStore } from '../../../store/ownershipStore'
-import { demoFiles } from '../../../lib/mockData'
 import { cn } from '../../../lib/utils'
 
 export function ContributorLegend() {
   const contributors = useOwnershipStore((state) => state.contributors)
+  const contributorCounts = useOwnershipStore((state) => state.contributorCounts)
   const palette = useOwnershipStore((state) => state.contributorPalette)
   const selected = useOwnershipStore((state) => state.selectedContributor)
   const setSelected = useOwnershipStore((state) => state.setSelectedContributor)
@@ -20,7 +20,7 @@ export function ContributorLegend() {
       </div>
       <div className="space-y-1">
         {contributors.map((name) => {
-          const count = demoFiles.filter((file) => file.primaryOwner === name).length
+          const count = contributorCounts[name] ?? 0
           return (
             <button
               key={name}

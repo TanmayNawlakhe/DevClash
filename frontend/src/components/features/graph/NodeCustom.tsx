@@ -13,7 +13,10 @@ export function NodeCustom({ data, selected }: any) {
   const highRisk = data.centrality >= 0.85
   const blastDepth = (data as FileNode & { blastDepth?: number }).blastDepth
   const priorityTop = viewMode === 'priority' && data.priorityRank <= 5
-  const size = viewMode === 'priority' ? 150 + data.priorityScore * 54 : 168
+  const label = nodeLabel(data, viewMode)
+  const size = viewMode === 'priority'
+    ? 168 + data.priorityScore * 58
+    : Math.min(220, Math.max(170, 132 + label.length * 3))
   const fill = nodeFill(data, viewMode)
 
   return (
@@ -30,16 +33,16 @@ export function NodeCustom({ data, selected }: any) {
         initial={{ opacity: 0, scale: 0.5 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-        className={`node-card relative rounded-lg border-2 bg-card/95 p-2 shadow-xl backdrop-blur ${priorityTop ? 'priority-shimmer' : ''} ${data.isOrphan ? 'border-dashed' : ''}`}
+        className={`node-card relative rounded-lg border-2 bg-white p-2 shadow-lg ${priorityTop ? 'priority-shimmer' : ''} ${data.isOrphan ? 'border-dashed' : ''}`}
         style={{
           width: size,
-          background: `linear-gradient(135deg, color-mix(in oklch, ${fill} 10%, var(--card)), var(--card) 52%)`,
-          borderColor: selected ? 'var(--primary)' : highRisk ? 'var(--destructive)' : blastDepth ? 'var(--destructive)' : 'var(--border)',
+          background: `linear-gradient(135deg, color-mix(in oklch, ${fill} 11%, white), white 58%)`,
+          borderColor: selected ? 'var(--primary)' : highRisk ? 'var(--destructive)' : blastDepth ? 'var(--destructive)' : 'color-mix(in oklch, var(--foreground) 12%, white)',
           boxShadow: selected
             ? '0 0 0 3px color-mix(in oklch, var(--primary) 20%, transparent), 0 16px 42px color-mix(in oklch, var(--primary) 20%, transparent)'
             : blastDepth
               ? `0 0 0 ${6 - blastDepth}px color-mix(in oklch, var(--destructive) ${30 - blastDepth * 6}%, transparent)`
-              : undefined,
+              : '0 10px 26px color-mix(in oklch, var(--foreground) 10%, transparent)',
         }}
       >
         <Handle type="target" position={Position.Top} className="opacity-0" />
@@ -48,7 +51,7 @@ export function NodeCustom({ data, selected }: any) {
             <FileCode2 className="size-4" />
           </span>
           <div className="min-w-0">
-            <p className="truncate font-mono text-xs font-semibold">{nodeLabel(data, viewMode)}</p>
+            <p className="truncate font-mono text-xs font-semibold">{label}</p>
             <p className="truncate font-mono text-[10px] text-muted-foreground">{truncatePath(data.path, 28)}</p>
           </div>
         </div>

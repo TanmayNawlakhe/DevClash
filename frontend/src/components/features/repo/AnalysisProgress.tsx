@@ -1,15 +1,25 @@
 import { motion } from 'framer-motion'
+import { X } from 'lucide-react'
 import { ANALYSIS_STAGES } from '../../../lib/constants'
 import { useRepoStore } from '../../../store/repoStore'
+import { Button } from '../../ui/Button'
 import { ProgressRing } from '../../ui/ProgressRing'
 
-export function AnalysisProgress() {
+export function AnalysisProgress({
+  canCancel = false,
+  isCancelling = false,
+  onCancel,
+}: {
+  canCancel?: boolean
+  isCancelling?: boolean
+  onCancel?: () => void
+}) {
   const status = useRepoStore((state) => state.analysisStatus)
   const progress = useRepoStore((state) => state.analysisProgress)
   const stage = useRepoStore((state) => state.currentStage)
   const liveLog = useRepoStore((state) => state.liveLog)
 
-  if (status === 'complete' || status === 'idle') return null
+  if (['complete', 'idle', 'failed', 'cancelled'].includes(status)) return null
 
   const currentIndex = ANALYSIS_STAGES.findIndex((item) => item.key === status)
 
@@ -33,6 +43,14 @@ export function AnalysisProgress() {
             </motion.div>
           ))}
         </div>
+        {canCancel && onCancel ? (
+          <div className="mt-6 flex justify-center">
+            <Button variant="outline" onClick={onCancel} disabled={isCancelling}>
+              <X className="size-4" />
+              {isCancelling ? 'Cancelling...' : 'Cancel Analysis'}
+            </Button>
+          </div>
+        ) : null}
       </motion.div>
     </div>
   )

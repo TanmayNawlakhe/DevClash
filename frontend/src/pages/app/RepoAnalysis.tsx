@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { FileCode2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, FileCode2, Loader2, PanelLeftClose, PanelLeftOpen, RotateCcw } from 'lucide-react'
+import { toast } from 'sonner'
 import { GraphCanvas } from '../../components/features/graph/GraphCanvas'
 import { AnalysisProgress } from '../../components/features/repo/AnalysisProgress'
 import { FileDetailPanel } from '../../components/features/panels/FileDetailPanel'
@@ -8,11 +10,17 @@ import { OnboardingPathPanel } from '../../components/features/panels/Onboarding
 import { OrphanPanel } from '../../components/features/panels/OrphanPanel'
 import { PrioritySidebar } from '../../components/features/panels/PrioritySidebar'
 import { RepoUrlInput } from '../../components/features/repo/RepoUrlInput'
+import { EmptyState } from '../../components/ui/EmptyState'
 import { LayerBadge } from '../../components/ui/Badge'
 import { SearchInput } from '../../components/ui/SearchInput'
 import { Tabs } from '../../components/ui/Tabs'
 import { useDebounce } from '../../hooks/useDebounce'
+import { buildPriorityRankings, describeRepoProgress, mergeRepoWithGraph } from '../../lib/repoAdapters'
+import { fetchGraph } from '../../services/graphService'
+import { cancelRepoAnalysis, fetchRepoStatus, retryRepoAnalysis } from '../../services/repoService'
 import { useGraphStore } from '../../store/graphStore'
+import { useOwnershipStore } from '../../store/ownershipStore'
+import { usePriorityStore } from '../../store/priorityStore'
 import { useRepoStore } from '../../store/repoStore'
 import { useUIStore } from '../../store/uiStore'
 import { cn, truncatePath } from '../../lib/utils'
@@ -22,12 +30,109 @@ export function RepoAnalysis() {
   const graph = useRepoStore((state) => state.graphData)
   const repos = useRepoStore((state) => state.repos)
   const setRepo = useRepoStore((state) => state.setRepo)
+  const upsertRepo = useRepoStore((state) => state.upsertRepo)
+  const setGraphData = useRepoStore((state) => state.setGraphData)
+  const setAnalysisStatus = useRepoStore((state) => state.setAnalysisStatus)
+  const setRankings = usePriorityStore((state) => state.setRankings)
+  const resetChecked = usePriorityStore((state) => state.resetChecked)
+  const setContributorsFromFiles = useOwnershipStore((state) => state.setContributorsFromFiles)
+  const setSelectedNode = useGraphStore((state) => state.setSelectedNode)
+  const setActivePanel = useUIStore((state) => state.setActivePanel)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const queryClient = useQueryClient()
+
+  const fallbackRepo = useMemo(
+    () => repos.find((item) => item.id === repoId) ?? null,
+    [repoId, repos],
+  )
+
+  const statusQuery = useQuery({
+    queryKey: ['repo-status', repoId],
+    queryFn: () => fetchRepoStatus(repoId!),
+    enabled: Boolean(repoId),
+    staleTime: 1000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status && ['pending', 'analyzing', 'cloning', 'parsing', 'ai_processing', 'cancelling'].includes(status)
+        ? 2000
+        : false
+    },
+  })
+
+  const repo = statusQuery.data ?? fallbackRepo
+
+  const graphQuery = useQuery({
+    queryKey: ['repo-graph', repoId],
+    queryFn: () => fetchGraph(repoId!),
+    enabled: Boolean(repoId && repo?.status === 'complete'),
+    staleTime: 30000,
+  })
+
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelRepoAnalysis(repoId!),
+    onSuccess: async (response: any) => {
+      toast.success(response.message ?? 'Cancellation requested.')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['repo-status', repoId] }),
+        queryClient.invalidateQueries({ queryKey: ['repos'] }),
+      ])
+    },
+    onError: () => {
+      toast.error('Could not cancel analysis.')
+    },
+  })
+
+  const retryMutation = useMutation({
+    mutationFn: () => retryRepoAnalysis(repoId!),
+    onSuccess: async (response: any) => {
+      toast.success(response.message ?? 'Retry scheduled.')
+      setGraphData(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['repo-status', repoId] }),
+        queryClient.invalidateQueries({ queryKey: ['repo-graph', repoId] }),
+        queryClient.invalidateQueries({ queryKey: ['repos'] }),
+      ])
+    },
+    onError: () => {
+      toast.error('Could not retry analysis.')
+    },
+  })
 
   useEffect(() => {
-    const repo = repos.find((item) => item.id === repoId)
-    if (repo) setRepo(repo)
-  }, [repoId, repos, setRepo])
+    setGraphData(null)
+    setSelectedNode(null)
+    setActivePanel(null)
+  }, [repoId, setActivePanel, setGraphData, setSelectedNode])
+
+  useEffect(() => {
+    if (!repo) return
+    upsertRepo(repo)
+    setRepo(repo)
+    const progress = describeRepoProgress(repo)
+    setAnalysisStatus(progress.status, progress.progress, progress.stage, progress.log)
+  }, [repo, setAnalysisStatus, setRepo, upsertRepo])
+
+  useEffect(() => {
+    if (!graphQuery.data || !repo) return
+    const hydratedRepo = mergeRepoWithGraph(repo, graphQuery.data)
+    upsertRepo(hydratedRepo)
+    setRepo(hydratedRepo)
+    setGraphData(graphQuery.data)
+    setRankings(buildPriorityRankings(graphQuery.data))
+    resetChecked()
+    setContributorsFromFiles(graphQuery.data.nodes)
+    setAnalysisStatus('complete', 100, 'Architecture map ready', `Loaded ${graphQuery.data.meta.nodeCount} files`)
+  }, [
+    graphQuery.data,
+    repo,
+    resetChecked,
+    setAnalysisStatus,
+    setContributorsFromFiles,
+    setGraphData,
+    setRankings,
+    setRepo,
+    upsertRepo,
+  ])
 
   if (!repoId) {
     return (
@@ -42,6 +147,9 @@ export function RepoAnalysis() {
       </div>
     )
   }
+
+  const isActiveAnalysis = Boolean(repo && ['pending', 'analyzing', 'cloning', 'parsing', 'ai_processing', 'cancelling'].includes(repo.status))
+  const showEmptyState = !graph && !isActiveAnalysis && !graphQuery.isLoading
 
   return (
     <div
@@ -76,12 +184,73 @@ export function RepoAnalysis() {
             <PanelLeftOpen className="size-4 text-muted-foreground" />
           </button>
         )}
-        {graph ? <GraphCanvas graph={graph} /> : null}
-        <AnalysisProgress />
+        {graph ? (
+          <GraphCanvas graph={graph} />
+        ) : showEmptyState ? (
+          <AnalysisStateCard
+            repoName={repo ? `${repo.owner}/${repo.name}` : 'repository'}
+            status={repo?.status}
+            errorMessage={repo?.errorMessage}
+            isRetrying={retryMutation.isPending}
+            onRetry={repo ? () => retryMutation.mutate() : undefined}
+          />
+        ) : (
+          <div className="flex h-full min-h-[640px] items-center justify-center rounded-lg border border-border bg-card/50">
+            <Loader2 className="size-8 animate-spin text-primary" />
+          </div>
+        )}
+        <AnalysisProgress
+          canCancel={Boolean(repo && ['pending', 'analyzing', 'cloning', 'parsing', 'ai_processing'].includes(repo.status))}
+          isCancelling={cancelMutation.isPending || repo?.status === 'cancelling'}
+          onCancel={repo ? () => cancelMutation.mutate() : undefined}
+        />
       </main>
 
       <FileDetailPanel />
     </div>
+  )
+}
+
+function AnalysisStateCard({
+  repoName,
+  status,
+  errorMessage,
+  isRetrying,
+  onRetry,
+}: {
+  repoName: string
+  status?: string
+  errorMessage?: string | null
+  isRetrying: boolean
+  onRetry?: () => void
+}) {
+  if (status === 'failed') {
+    return (
+      <EmptyState
+        illustration={<AlertTriangle className="size-10 text-destructive" />}
+        title={`Analysis failed for ${repoName}`}
+        description={errorMessage ?? 'The backend could not finish building the dependency graph for this repository.'}
+        action={onRetry ? { label: isRetrying ? 'Retrying...' : 'Retry analysis', onClick: onRetry } : undefined}
+      />
+    )
+  }
+
+  if (status === 'cancelled') {
+    return (
+      <EmptyState
+        illustration={<RotateCcw className="size-10 text-primary" />}
+        title={`Analysis cancelled for ${repoName}`}
+        description="You can queue the repository again whenever you're ready."
+        action={onRetry ? { label: isRetrying ? 'Retrying...' : 'Analyze again', onClick: onRetry } : undefined}
+      />
+    )
+  }
+
+  return (
+    <EmptyState
+      title={`No graph loaded for ${repoName}`}
+      description="The repository is connected, but the backend has not returned a completed graph yet."
+    />
   )
 }
 

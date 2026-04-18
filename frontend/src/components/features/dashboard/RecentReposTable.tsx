@@ -26,7 +26,7 @@ export function RecentReposTable({ repos }: { repos: Repo[] }) {
           header: 'Languages',
           cell: (repo) => (
             <div className="flex gap-1">
-              {repo.languages.slice(0, 2).map((language) => (
+              {(repo.languages.length ? repo.languages : ['Pending']).slice(0, 2).map((language) => (
                 <Badge key={language}>{language}</Badge>
               ))}
             </div>

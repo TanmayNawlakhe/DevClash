@@ -1,8 +1,11 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
 
+const configuredApiBaseUrl = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? ''
+const runtimeApiBaseUrl = configuredApiBaseUrl || (import.meta.env.DEV ? 'http://localhost:8000' : '')
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? '',
+  baseURL: runtimeApiBaseUrl,
   timeout: 15000,
 })
 
@@ -26,5 +29,9 @@ api.interceptors.response.use(
 )
 
 export function hasConfiguredApi() {
-  return Boolean(import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL)
+  return Boolean(configuredApiBaseUrl)
+}
+
+export function hasRepoApi() {
+  return Boolean(runtimeApiBaseUrl)
 }

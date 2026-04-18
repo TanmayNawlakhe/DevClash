@@ -1,22 +1,23 @@
-import { api, hasConfiguredApi } from './api'
+import { api, hasConfiguredApi, hasRepoApi } from './api'
 import { demoCode, demoFiles, demoGraph } from '../lib/mockData'
+import { adaptRepoFileDetail, adaptRepoGraph } from '../lib/repoAdapters'
 import { sleep } from '../lib/utils'
 import type { FileDetail, GraphData, QueryResult } from '../types'
 
 export async function fetchGraph(repoId: string): Promise<GraphData> {
-  if (hasConfiguredApi()) {
-    const { data } = await api.get<GraphData>(`/api/repos/${repoId}/graph`)
-    return data
+  if (hasRepoApi()) {
+    const { data } = await api.get<any>(`/api/repos/${repoId}/graph`)
+    return adaptRepoGraph(data)
   }
 
   await sleep(250)
   return demoGraph
 }
 
-export async function fetchFileDetail(repoId: string, fileId: string): Promise<FileDetail> {
-  if (hasConfiguredApi()) {
-    const { data } = await api.get<FileDetail>(`/api/repos/${repoId}/files/${fileId}`)
-    return data
+export async function fetchFileDetail(repoId: string, fileId: string, graph: GraphData | null): Promise<FileDetail> {
+  if (hasRepoApi()) {
+    const { data } = await api.get<any>(`/api/repos/${repoId}/files/${fileId}`)
+    return adaptRepoFileDetail(repoId, data, graph)
   }
 
   await sleep(200)

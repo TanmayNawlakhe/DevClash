@@ -3,6 +3,7 @@ import os
 import sys
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # Allow running from backend/app (uvicorn main:app) by ensuring backend is on sys.path.
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,6 +36,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="DevClash Backend", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.frontend_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(repos_router)
 
 
