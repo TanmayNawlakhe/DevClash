@@ -1,0 +1,1 @@
+export { submitNLQuery } from './graphService'
