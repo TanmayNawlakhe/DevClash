@@ -178,6 +178,8 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                 "meta": graph_payload["meta"],
                 # Flat path list kept for quick look-ups without loading full nodes
                 "file_paths": file_paths,
+                # Retain clone path so file detail endpoint can read source previews.
+                "clone_path": str(clone_path) if clone_path is not None else None,
                 # Pre-computed AI summaries — served by GET /api/repos/{id}/summaries
                 "summaries": summaries_list,
                 "updated_at": now,

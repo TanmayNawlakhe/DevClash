@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+from pathlib import Path
+import shutil
+import subprocess
 from typing import Any
 
 from bson import ObjectId
@@ -23,6 +26,8 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__, level=settings.log_level)
 router = APIRouter(prefix="/api/repos", tags=["repos"])
+
+MAX_SOURCE_PREVIEW_CHARS = 80_000
 
 
 async def ensure_repo_indexes() -> None:
@@ -64,6 +69,66 @@ def _progress_payload(stage: str, percent: int, current_file: str | None = None)
         "current_file": current_file,
         "updated_at": datetime.now(timezone.utc),
     }
+
+
+def _read_source_preview(clone_path: Path, file_path: str) -> str | None:
+    try:
+        base = clone_path.resolve()
+        candidate = (base / Path(file_path)).resolve()
+        candidate.relative_to(base)
+        if not candidate.is_file():
+            return None
+
+        content = candidate.read_text(encoding="utf-8", errors="ignore")
+        if len(content) <= MAX_SOURCE_PREVIEW_CHARS:
+            return content
+
+        return (
+            content[:MAX_SOURCE_PREVIEW_CHARS]
+            + "\n\n[preview truncated due to file size]"
+        )
+    except Exception:
+        return None
+
+
+def _ensure_preview_clone(repo_id: str, github_url: str) -> Path | None:
+    try:
+        clone_base = Path(settings.repo_clone_base_dir)
+        clone_base.mkdir(parents=True, exist_ok=True)
+        preview_path = clone_base / f"preview_{repo_id}"
+
+        # Replace broken or partial clone directories.
+        if preview_path.exists() and not (preview_path / ".git").exists():
+            shutil.rmtree(preview_path, ignore_errors=True)
+
+        if not preview_path.exists():
+            result = subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--single-branch",
+                    github_url,
+                    str(preview_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=settings.clone_timeout_seconds,
+                check=False,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "[file-detail] Preview clone failed for repo %s: %s",
+                    repo_id,
+                    (result.stderr or result.stdout or "unknown error").strip(),
+                )
+                return None
+
+        return preview_path
+    except Exception:
+        logger.exception("[file-detail] Failed to ensure preview clone for repo %s", repo_id)
+        return None
 
 
 def _filter_graph_payload(
@@ -354,6 +419,22 @@ async def get_repo_file_detail(repo_id: str, file_path: str) -> RepoFileDetailRe
     )
 
     data = selected_node.get("data", {})
+
+    source_code: str | None = None
+
+    clone_path_raw = graph_doc.get("clone_path")
+    if clone_path_raw:
+        source_code = _read_source_preview(Path(str(clone_path_raw)), file_path)
+
+    if source_code is None:
+        preview_path = _ensure_preview_clone(repo_id=repo_id, github_url=repo_doc["github_url"])
+        if preview_path is not None:
+            source_code = _read_source_preview(preview_path, file_path)
+            await graph_collection.update_one(
+                {"repo_id": repo_object_id},
+                {"$set": {"clone_path": str(preview_path)}},
+            )
+
     return RepoFileDetailResponse(
         repo_id=repo_id,
         file_path=file_path,
@@ -362,6 +443,7 @@ async def get_repo_file_detail(repo_id: str, file_path: str) -> RepoFileDetailRe
         out_degree=int(data.get("outDegree", 0)),
         is_entry=bool(data.get("isEntry", False)),
         is_orphan=bool(data.get("isOrphan", False)),
+        source_code=source_code,
         imports=imports,
         dependents=dependents,
     )

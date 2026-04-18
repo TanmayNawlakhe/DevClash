@@ -1,6 +1,6 @@
 import { api, hasConfiguredApi, hasRepoApi } from './api'
 import { demoCode, demoFiles, demoGraph } from '../lib/mockData'
-import { adaptRepoFileDetail, adaptRepoGraph } from '../lib/repoAdapters'
+import { adaptRepoFileDetail, adaptRepoGraph, searchGraphSummaries } from '../lib/repoAdapters'
 import { sleep } from '../lib/utils'
 import type { FileDetail, GraphData, QueryResult } from '../types'
 
@@ -32,6 +32,24 @@ export async function fetchFileDetail(repoId: string, fileId: string, graph: Gra
   }
 }
 
+export async function fetchRepoSummaries(repoId: string) {
+  if (hasRepoApi()) {
+    const { data } = await api.get<any>(`/api/repos/${repoId}/summaries`)
+    return data
+  }
+
+  await sleep(200)
+  return {
+    repo_id: repoId,
+    total_files: demoGraph.nodes.length,
+    summarized_files: demoGraph.nodes.length,
+    summaries: demoGraph.nodes.map((node) => ({
+      path: node.id,
+      summary: node.summary,
+    })),
+  }
+}
+
 export async function fetchHeatmap(repoId: string) {
   if (hasConfiguredApi()) {
     const { data } = await api.get(`/api/repos/${repoId}/heatmap`)
@@ -41,9 +59,26 @@ export async function fetchHeatmap(repoId: string) {
 }
 
 export async function submitNLQuery(repoId: string, query: string): Promise<QueryResult> {
-  if (hasConfiguredApi()) {
-    const { data } = await api.post<QueryResult>(`/api/repos/${repoId}/query`, { query })
-    return data
+  if (hasRepoApi()) {
+    const graph = await fetchGraph(repoId)
+    let summariesPayload: { summaries: Array<{ path: string; summary: string }> } = { summaries: [] }
+
+    try {
+      summariesPayload = await fetchRepoSummaries(repoId)
+    } catch {
+      // Keep query usable even if summaries are not available for an older repo.
+    }
+
+    const enrichedGraph = {
+      ...graph,
+      nodes: graph.nodes.map((node) => ({
+        ...node,
+        summary:
+          summariesPayload.summaries.find((item: { path: string; summary: string }) => item.path === node.id)?.summary ??
+          node.summary,
+      })),
+    }
+    return searchGraphSummaries(enrichedGraph, query)
   }
 
   await sleep(450)

@@ -15,8 +15,8 @@ import { LayerBadge } from '../../components/ui/Badge'
 import { SearchInput } from '../../components/ui/SearchInput'
 import { Tabs } from '../../components/ui/Tabs'
 import { useDebounce } from '../../hooks/useDebounce'
-import { buildPriorityRankings, describeRepoProgress, mergeRepoWithGraph } from '../../lib/repoAdapters'
-import { fetchGraph } from '../../services/graphService'
+import { applyRepoSummariesToGraph, buildPriorityRankings, describeRepoProgress, mergeRepoWithGraph } from '../../lib/repoAdapters'
+import { fetchGraph, fetchRepoSummaries } from '../../services/graphService'
 import { cancelRepoAnalysis, fetchRepoStatus, retryRepoAnalysis } from '../../services/repoService'
 import { useGraphStore } from '../../store/graphStore'
 import { useOwnershipStore } from '../../store/ownershipStore'
@@ -68,6 +68,13 @@ export function RepoAnalysis() {
     staleTime: 30000,
   })
 
+  const summariesQuery = useQuery({
+    queryKey: ['repo-summaries', repoId],
+    queryFn: () => fetchRepoSummaries(repoId!),
+    enabled: Boolean(repoId && repo?.status === 'complete'),
+    staleTime: 30000,
+  })
+
   const cancelMutation = useMutation({
     mutationFn: () => cancelRepoAnalysis(repoId!),
     onSuccess: async (response: any) => {
@@ -112,18 +119,30 @@ export function RepoAnalysis() {
     setAnalysisStatus(progress.status, progress.progress, progress.stage, progress.log)
   }, [repo, setAnalysisStatus, setRepo, upsertRepo])
 
+  const enrichedGraph = useMemo(() => {
+    if (!graphQuery.data) return null
+    return applyRepoSummariesToGraph(graphQuery.data, summariesQuery.data?.summaries ?? [])
+  }, [graphQuery.data, summariesQuery.data])
+
   useEffect(() => {
-    if (!graphQuery.data || !repo) return
-    const hydratedRepo = mergeRepoWithGraph(repo, graphQuery.data)
+    if (!enrichedGraph || !repo) return
+    const hydratedRepo = mergeRepoWithGraph(repo, enrichedGraph)
     upsertRepo(hydratedRepo)
     setRepo(hydratedRepo)
-    setGraphData(graphQuery.data)
-    setRankings(buildPriorityRankings(graphQuery.data))
+    setGraphData(enrichedGraph)
+    setRankings(buildPriorityRankings(enrichedGraph))
     resetChecked()
-    setContributorsFromFiles(graphQuery.data.nodes)
-    setAnalysisStatus('complete', 100, 'Architecture map ready', `Loaded ${graphQuery.data.meta.nodeCount} files`)
+    setContributorsFromFiles(enrichedGraph.nodes)
+    setAnalysisStatus(
+      'complete',
+      100,
+      'Architecture map ready',
+      summariesQuery.data
+        ? `Loaded ${enrichedGraph.meta.nodeCount} files and ${summariesQuery.data.summarized_files} AI summaries`
+        : `Loaded ${enrichedGraph.meta.nodeCount} files`,
+    )
   }, [
-    graphQuery.data,
+    enrichedGraph,
     repo,
     resetChecked,
     setAnalysisStatus,
@@ -131,6 +150,7 @@ export function RepoAnalysis() {
     setGraphData,
     setRankings,
     setRepo,
+    summariesQuery.data,
     upsertRepo,
   ])
 
@@ -149,7 +169,7 @@ export function RepoAnalysis() {
   }
 
   const isActiveAnalysis = Boolean(repo && ['pending', 'analyzing', 'cloning', 'parsing', 'ai_processing', 'cancelling'].includes(repo.status))
-  const showEmptyState = !graph && !isActiveAnalysis && !graphQuery.isLoading
+  const showEmptyState = !graph && !isActiveAnalysis && !graphQuery.isLoading && !summariesQuery.isLoading
 
   return (
     <div
@@ -264,7 +284,11 @@ function LeftAnalysisPanel({ onClose }: { onClose: () => void }) {
 
   const files = useMemo(() => {
     const query = debounced.toLowerCase()
-    return (graph?.nodes ?? []).filter((file) => file.path.toLowerCase().includes(query))
+    return (graph?.nodes ?? []).filter(
+      (file) =>
+        file.path.toLowerCase().includes(query) ||
+        file.summary.toLowerCase().includes(query),
+    )
   }, [debounced, graph])
 
   return (

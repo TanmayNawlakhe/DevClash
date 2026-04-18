@@ -58,6 +58,7 @@ class RepoFileDetailResponse(BaseModel):
     out_degree: int
     is_entry: bool
     is_orphan: bool
+    source_code: str | None = None
     imports: list[str]
     dependents: list[str]
 
