@@ -14,6 +14,8 @@ from app.schemas.repo import (
     RepoCreateRequest,
     RepoFileDetailResponse,
     RepoFileSummary,
+    RepoFunctionInfo,
+    RepoFunctionSummary,
     RepoGraphResponse,
     RepoListResponse,
     RepoStatusResponse,
@@ -359,6 +361,15 @@ async def get_repo_summaries(repo_id: str) -> RepoSummariesResponse:
         RepoFileSummary(
             path=str(item.get("path", "")),
             summary=str(item.get("summary", "")),
+            keywords=[str(k) for k in item.get("keywords", []) if k],
+            function_summaries=[
+                RepoFunctionSummary(
+                    name=str(fs.get("name", "")),
+                    summary=str(fs.get("summary", "")),
+                )
+                for fs in item.get("function_summaries", [])
+                if fs.get("name") and fs.get("summary")
+            ],
         )
         for item in raw_summaries
         if item.get("path") and item.get("summary")
@@ -435,6 +446,18 @@ async def get_repo_file_detail(repo_id: str, file_path: str) -> RepoFileDetailRe
                 {"$set": {"clone_path": str(preview_path)}},
             )
 
+    # Extract pre-computed function list from node data
+    raw_funcs: list[dict] = data.get("functions", [])
+    function_list = [
+        RepoFunctionInfo(
+            name=str(f.get("name", "")),
+            type=str(f.get("type", "function")),
+            line=int(f.get("line", 0)),
+        )
+        for f in raw_funcs
+        if f.get("name")
+    ]
+
     return RepoFileDetailResponse(
         repo_id=repo_id,
         file_path=file_path,
@@ -446,6 +469,8 @@ async def get_repo_file_detail(repo_id: str, file_path: str) -> RepoFileDetailRe
         source_code=source_code,
         imports=imports,
         dependents=dependents,
+        functions=function_list,
+        function_count=len(raw_funcs),
     )
 
 

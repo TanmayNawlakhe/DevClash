@@ -68,6 +68,42 @@ HTML_ASSET_SRC_RE = re.compile(
 CSS_IMPORT_RE = re.compile(r"@import\s+(?:url\()?\s*[\"']?([^\"')\s;]+)", re.IGNORECASE)
 CSS_URL_RE = re.compile(r"url\(\s*[\"']?([^\"')]+)[\"']?\s*\)", re.IGNORECASE)
 
+# ── Function / class extraction regexes ──────────────────────────────────────
+# JavaScript / TypeScript
+JS_FUNC_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*[\.(<\",]"
+)
+JS_ARROW_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*="
+    r"\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>"
+)
+JS_CLASS_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)"
+)
+JS_METHOD_RE = re.compile(
+    r"^\s+(?:(?:public|private|protected|static|async|get|set|override)\s+)*"
+    r"([A-Za-z_$][A-Za-z0-9_$]*)\s*\([^)]*\)\s*(?::\s*\S+)?\s*\{"
+)
+
+# Go
+GO_FUNC_RE = re.compile(
+    r"^func\s+(?:\([^)]+\)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[(\<]"
+)
+
+# Rust
+RUST_FN_RE = re.compile(
+    r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)"
+)
+RUST_IMPL_RE = re.compile(r"^\s*(?:pub\s+)?(?:unsafe\s+)?impl(?:\s*<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_]*)")
+RUST_STRUCT_RE = re.compile(r"^\s*(?:pub(?:\([^)]+\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)")
+RUST_ENUM_RE = re.compile(r"^\s*(?:pub(?:\([^)]+\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)")
+RUST_TRAIT_RE = re.compile(r"^\s*(?:pub(?:\([^)]+\))?\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+# C / C++ — simple heuristic: return-type + name + '(' on the same line, no semicolon
+C_FUNC_RE = re.compile(
+    r"^(?!\s*[#/])(?:[\w:*&\s]+\s+)([A-Za-z_][A-Za-z0-9_:]*)\s*\([^;)]*\)\s*(?:const\s*)?(?:\{|$)"
+)
+
 
 def normalize_github_url(url: str) -> str:
     cleaned = url.strip()
@@ -192,9 +228,18 @@ async def analyze_repository_graph(
                 percent = 25 + int(((index + 1) / max(1, file_count)) * 67)
                 await _emit_progress(progress_callback, "parsing_dependencies", percent, rel_path)
 
+        await _emit_progress(progress_callback, "extracting_functions", 93)
+
+        # Second pass: extract function/class names while the repo is still on disk.
+        # This is a fast read-only scan — no parsing heavy enough to block the loop.
+        functions_by_file: dict[str, list[dict]] = {}
+        for rel_path in files:
+            abs_path = repo_clone_path / Path(rel_path)
+            functions_by_file[rel_path] = _extract_functions_from_file(abs_path, rel_path)
+
         await _emit_progress(progress_callback, "building_graph", 95)
 
-        graph_payload = _build_graph_payload(files, edges)
+        graph_payload = _build_graph_payload(files, edges, functions_by_file)
         await _emit_progress(progress_callback, "complete", 100)
         # Return the clone path so the caller can read file content for AI
         # summarisation before cleaning up the directory.
@@ -221,7 +266,15 @@ async def _emit_progress(
 
 def _clone_repository(url: str, destination: Path, timeout_seconds: int) -> None:
     result = subprocess.run(
-        ["git", "clone", "--depth", "1", "--single-branch", url, str(destination)],
+        [
+            "git",
+            "-c", "core.longpaths=true",   # Windows MAX_PATH workaround
+            "clone",
+            "--depth", "1",
+            "--single-branch",
+            url,
+            str(destination),
+        ],
         capture_output=True,
         text=True,
         timeout=timeout_seconds,
@@ -231,8 +284,16 @@ def _clone_repository(url: str, destination: Path, timeout_seconds: int) -> None
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
-        details = stderr or stdout or "unknown clone error"
-        raise RuntimeError(f"git clone failed: {details}")
+        combined = stderr or stdout or "unknown clone error"
+
+        # git exits non-zero when checkout partially fails (e.g. long filenames
+        # on Windows) but the bare objects were still fetched.  If the
+        # destination directory exists and is a valid git repo we can continue;
+        # the source-file scanner only reads files that were actually checked out.
+        if "checkout failed" in combined.lower() or "unable to create file" in combined.lower():
+            if (destination / ".git").exists():
+                return  # partial checkout — carry on, unreadable files will be skipped
+        raise RuntimeError(f"git clone failed: {combined}")
 
 
 def _collect_source_files(base_path: Path) -> list[str]:
@@ -797,7 +858,339 @@ def _resolve_relative_import(
     return None
 
 
-def _build_graph_payload(files: list[str], edges: set[tuple[str, str]]) -> dict:
+def _count_brace_lines(lines: list[str], start_idx: int) -> int:
+    """Count lines from start_idx until the matching closing brace.
+
+    Returns the number of lines (inclusive) used by the construct, or 0 if the
+    opening brace is never found / never closed.
+    """
+    depth = 0
+    found_open = False
+    for i, line in enumerate(lines[start_idx:]):
+        opens = line.count("{")
+        closes = line.count("}")
+        if opens > 0:
+            found_open = True
+        depth += opens - closes
+        if found_open and depth <= 0:
+            return i + 1
+    return 0
+
+
+def _parse_simple_params(raw: str) -> list[str]:
+    """Strip types / defaults / decorators from a raw parameter string.
+
+    Works for JS/TS, Go, Rust, C/C++ (not Python — that uses AST).
+    Returns a plain list of parameter names.
+    """
+    if not raw or not raw.strip():
+        return []
+    params: list[str] = []
+    for part in raw.split(","):
+        p = part.strip()
+        # Remove TypeScript type annotation  `name: Type`
+        p = p.split(":")[0].strip()
+        # Remove default values  `name = default`
+        p = p.split("=")[0].strip()
+        # Remove Go-style type suffix  `name Type`  (keep first word)
+        p = p.split()[0] if p.split() else p
+        # Remove Rust mutability / reference prefixes
+        p = p.lstrip("&*mut ")
+        # Remove rest/spread  `...name`
+        p = p.lstrip(".")
+        # Remove JS destructuring openers
+        p = p.lstrip("{[")
+        # Skip empty after stripping, self/this receivers, underscore blanks
+        if p and p not in {"self", "this", "_", ""}:
+            params.append(p)
+    return params
+
+
+def _extract_functions_from_file(file_path: Path, rel_path: str) -> list[dict]:
+    """Dispatch to the right language extractor; return list of function/class dicts.
+
+    Each dict has keys:
+    - ``name``       (str)  — identifier name
+    - ``type``       (str)  — function | async_function | class | method |
+                              arrow_function | struct | enum | trait | impl
+    - ``line``       (int)  — 1-indexed start line
+    - ``line_count`` (int)  — number of lines in the body (0 = unknown)
+    - ``params``     (list[str]) — parameter names (simplified)
+    - ``returns``    (str | None) — return type string if detectable
+    """
+    suffix = PurePosixPath(rel_path).suffix.lower()
+    try:
+        if suffix in PYTHON_EXTENSIONS:
+            return _extract_python_functions(file_path)
+        if suffix in JS_TS_EXTENSIONS:
+            return _extract_js_ts_functions(file_path)
+        if suffix in GO_EXTENSIONS:
+            return _extract_go_functions(file_path)
+        if suffix in RUST_EXTENSIONS:
+            return _extract_rust_functions(file_path)
+        if suffix in C_CPP_EXTENSIONS:
+            return _extract_c_cpp_functions(file_path)
+    except Exception:
+        pass
+    return []
+
+
+def _extract_python_functions(file_path: Path) -> list[dict]:
+    """Use Python's AST for accurate function / class extraction."""
+    try:
+        source = file_path.read_text(encoding="utf-8", errors="ignore")
+        tree = ast.parse(source)
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            lc = (node.end_lineno - node.lineno + 1) if hasattr(node, "end_lineno") else 0
+            results.append({
+                "name": node.name,
+                "type": "class",
+                "line": node.lineno,
+                "line_count": lc,
+                "params": [],
+                "returns": None,
+            })
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            params: list[str] = [
+                a.arg for a in (args.posonlyargs + args.args + args.kwonlyargs)
+            ]
+            if args.vararg:
+                params.append(f"*{args.vararg.arg}")
+            if args.kwarg:
+                params.append(f"**{args.kwarg.arg}")
+
+            returns: str | None = None
+            if node.returns:
+                try:
+                    returns = ast.unparse(node.returns)
+                except Exception:
+                    pass
+
+            lc = (node.end_lineno - node.lineno + 1) if hasattr(node, "end_lineno") else 0
+            kind = "async_function" if isinstance(node, ast.AsyncFunctionDef) else "function"
+            results.append({
+                "name": node.name,
+                "type": kind,
+                "line": node.lineno,
+                "line_count": lc,
+                "params": params,
+                "returns": returns,
+            })
+
+    results.sort(key=lambda x: x["line"])
+    return results
+
+
+# Regex for capturing parameter strings inside JS/TS function signatures
+_JS_PARAMS_RE = re.compile(r"\(([^)]*)\)")
+# Regex for TS return type annotation after ): TypeHere {
+_JS_RETURN_RE = re.compile(r"\)\s*:\s*([A-Za-z_$][^\{;=]*?)\s*(?:\{|=>|$)")
+
+
+def _extract_js_ts_functions(file_path: Path) -> list[dict]:
+    """Regex-based extraction for JavaScript / TypeScript."""
+    try:
+        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    for lineno, line in enumerate(lines, start=1):
+        m = JS_CLASS_RE.match(line)
+        if m:
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "class",
+                "line": lineno, "line_count": lc,
+                "params": [], "returns": None,
+            })
+            continue
+
+        m = JS_FUNC_RE.match(line)
+        if m:
+            kind = "async_function" if "async" in line[:line.find(m.group(1))] else "function"
+            pm = _JS_PARAMS_RE.search(line)
+            params = _parse_simple_params(pm.group(1)) if pm else []
+            rm = _JS_RETURN_RE.search(line)
+            returns = rm.group(1).strip() if rm else None
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": kind,
+                "line": lineno, "line_count": lc,
+                "params": params, "returns": returns,
+            })
+            continue
+
+        m = JS_ARROW_RE.match(line)
+        if m:
+            pm = _JS_PARAMS_RE.search(line)
+            params = _parse_simple_params(pm.group(1)) if pm else []
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "arrow_function",
+                "line": lineno, "line_count": lc,
+                "params": params, "returns": None,
+            })
+            continue
+
+        m = JS_METHOD_RE.match(line)
+        if m and m.group(1) not in {"if", "for", "while", "switch", "catch"}:
+            pm = _JS_PARAMS_RE.search(line)
+            params = _parse_simple_params(pm.group(1)) if pm else []
+            rm = _JS_RETURN_RE.search(line)
+            returns = rm.group(1).strip() if rm else None
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "method",
+                "line": lineno, "line_count": lc,
+                "params": params, "returns": returns,
+            })
+
+    return results
+
+
+# Extended Go regex: captures name, param-list, and optional return type(s)
+_GO_FUNC_FULL_RE = re.compile(
+    r"^func\s+(?:\([^)]+\)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)"
+    r"(?:\s*(?:\(([^)]*)\)|([A-Za-z_*\[\]\.][^\s{]*)))?"
+)
+
+
+def _extract_go_functions(file_path: Path) -> list[dict]:
+    """Regex-based extraction for Go."""
+    try:
+        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    for lineno, line in enumerate(lines, start=1):
+        m = _GO_FUNC_FULL_RE.match(line)
+        if m:
+            params = _parse_simple_params(m.group(2) or "")
+            # group(3) = tuple returns "(T1, T2)", group(4) = single return "T"
+            raw_ret = m.group(3) or m.group(4)
+            returns = raw_ret.strip() if raw_ret else None
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "function",
+                "line": lineno, "line_count": lc,
+                "params": params, "returns": returns,
+            })
+    return results
+
+
+# Extended Rust fn regex: captures name, param-list, optional return type
+_RUST_FN_FULL_RE = re.compile(
+    r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)(?:<[^>]+>)?\(([^)]*)\)"
+    r"(?:\s*->\s*([^{;where]+))?"
+)
+
+
+def _extract_rust_functions(file_path: Path) -> list[dict]:
+    """Regex-based extraction for Rust fn / struct / enum / trait / impl."""
+    try:
+        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    for lineno, line in enumerate(lines, start=1):
+        m = _RUST_FN_FULL_RE.match(line)
+        if m:
+            kind = "async_function" if "async" in line[:line.find("fn")] else "function"
+            params = _parse_simple_params(m.group(2) or "")
+            returns = m.group(3).strip() if m.group(3) else None
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": kind,
+                "line": lineno, "line_count": lc,
+                "params": params, "returns": returns,
+            })
+            continue
+        m = RUST_STRUCT_RE.match(line)
+        if m:
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "struct",
+                "line": lineno, "line_count": lc,
+                "params": [], "returns": None,
+            })
+            continue
+        m = RUST_ENUM_RE.match(line)
+        if m:
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "enum",
+                "line": lineno, "line_count": lc,
+                "params": [], "returns": None,
+            })
+            continue
+        m = RUST_TRAIT_RE.match(line)
+        if m:
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "trait",
+                "line": lineno, "line_count": lc,
+                "params": [], "returns": None,
+            })
+            continue
+        m = RUST_IMPL_RE.match(line)
+        if m:
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "impl",
+                "line": lineno, "line_count": lc,
+                "params": [], "returns": None,
+            })
+    return results
+
+
+# C/C++ params between the first ( ) on the definition line
+_C_PARAMS_RE = re.compile(r"\(([^)]*)\)")
+
+
+def _extract_c_cpp_functions(file_path: Path) -> list[dict]:
+    """Heuristic regex extraction for C/C++ function definitions."""
+    try:
+        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    skip_keywords = {
+        "if", "for", "while", "switch", "return", "else",
+        "do", "catch", "case", "default", "namespace",
+    }
+    for lineno, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("//", "/*", "*", "#")):
+            continue
+        m = C_FUNC_RE.match(line)
+        if m and m.group(1) not in skip_keywords:
+            pm = _C_PARAMS_RE.search(line)
+            params = _parse_simple_params(pm.group(1)) if pm else []
+            lc = _count_brace_lines(lines, lineno - 1)
+            results.append({
+                "name": m.group(1), "type": "function",
+                "line": lineno, "line_count": lc,
+                "params": params, "returns": None,
+            })
+    return results
+
+
+def _build_graph_payload(
+    files: list[str],
+    edges: set[tuple[str, str]],
+    functions_by_file: dict[str, list[dict]] | None = None,
+) -> dict:
     in_degree = {path: 0 for path in files}
     out_degree = {path: 0 for path in files}
 
@@ -808,6 +1201,7 @@ def _build_graph_payload(files: list[str], edges: set[tuple[str, str]]) -> dict:
     nodes: list[dict] = []
 
     for index, path in enumerate(files):
+        funcs = (functions_by_file or {}).get(path, [])
         node = {
             "id": path,
             "position": {
@@ -822,6 +1216,9 @@ def _build_graph_payload(files: list[str], edges: set[tuple[str, str]]) -> dict:
                 "isOrphan": in_degree[path] == 0 and out_degree[path] == 0,
                 "inDegree": in_degree[path],
                 "outDegree": out_degree[path],
+                # List of extracted functions/classes; populated during analysis.
+                "functions": funcs,
+                "functionCount": len(funcs),
             },
         }
         nodes.append(node)

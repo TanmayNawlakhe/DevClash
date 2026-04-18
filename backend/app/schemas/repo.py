@@ -50,6 +50,21 @@ class RepoActionResponse(BaseModel):
     message: str
 
 
+class RepoFunctionInfo(BaseModel):
+    name: str
+    type: str   # function | async_function | class | method | arrow_function | struct | enum | trait | impl
+    line: int
+    line_count: int = 0          # number of lines in the body (0 = unknown)
+    params: list[str] = []       # simplified parameter names
+    returns: str | None = None   # return type if detectable
+    summary: str | None = None   # AI-generated summary (populated after analysis)
+
+
+class RepoFunctionSummary(BaseModel):
+    name: str
+    summary: str
+
+
 class RepoFileDetailResponse(BaseModel):
     repo_id: str
     file_path: str
@@ -61,11 +76,15 @@ class RepoFileDetailResponse(BaseModel):
     source_code: str | None = None
     imports: list[str]
     dependents: list[str]
+    functions: list[RepoFunctionInfo] = []
+    function_count: int = 0
 
 
 class RepoFileSummary(BaseModel):
     path: str
     summary: str
+    keywords: list[str] = []                         # AI-extracted technical keywords
+    function_summaries: list[RepoFunctionSummary] = []
 
 
 class RepoSummariesResponse(BaseModel):

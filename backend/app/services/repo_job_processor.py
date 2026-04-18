@@ -152,15 +152,59 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
         )
 
         # ------------------------------------------------------------------ #
+        # Merge AI results back into nodes                                    #
+        # ------------------------------------------------------------------ #
+
+        # Build fast lookup: path → {func_name → summary}
+        func_sum_lookup: dict[str, dict[str, str]] = {}
+        for path, v in summaries_by_path.items():
+            if not isinstance(v, dict):
+                continue
+            func_sum_lookup[path] = {
+                fs["name"]: fs["summary"]
+                for fs in v.get("function_summaries", [])
+                if fs.get("name") and fs.get("summary")
+            }
+
+        # Annotate each node's data with AI-generated summary, keywords,
+        # and per-function summaries (written into function objects in-place)
+        for node in nodes:
+            path = str(node.get("id", ""))
+            v = summaries_by_path.get(path)
+            if not isinstance(v, dict):
+                continue
+            data = node.setdefault("data", {})
+            data["summary"] = v.get("summary", "")
+            data["keywords"] = v.get("keywords", [])
+
+            # Merge function summary into each function object
+            fn_map = func_sum_lookup.get(path, {})
+            for func in data.get("functions", []):
+                name = func.get("name")
+                if name and name in fn_map:
+                    func["summary"] = fn_map[name]
+
+        logger.info(
+            "[job] Merged AI summaries + keywords into %d nodes",
+            len(summaries_by_path),
+        )
+
+        # ------------------------------------------------------------------ #
         # Persist graph + summaries to DB                                     #
         # ------------------------------------------------------------------ #
         now = _utcnow()
 
         file_paths: list[str] = [str(n.get("id", "")) for n in nodes if n.get("id")]
 
-        # Convert {path: summary} → [{path, summary}] for storage
+        # Convert {path: {summary, keywords, function_summaries}} → flat list for quick API access
         summaries_list = [
-            {"path": p, "summary": s} for p, s in summaries_by_path.items()
+            {
+                "path": p,
+                "summary": v.get("summary", "") if isinstance(v, dict) else str(v),
+                "keywords": v.get("keywords", []) if isinstance(v, dict) else [],
+                "function_summaries": v.get("function_summaries", []) if isinstance(v, dict) else [],
+            }
+            for p, v in summaries_by_path.items()
         ]
 
         logger.info(
@@ -173,6 +217,7 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
             {"repo_id": repo_object_id},
             {
                 "repo_id": repo_object_id,
+                # Nodes now carry summary, keywords, and function.summary inline
                 "nodes": nodes,
                 "edges": edges,
                 "meta": graph_payload["meta"],
@@ -180,7 +225,7 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                 "file_paths": file_paths,
                 # Retain clone path so file detail endpoint can read source previews.
                 "clone_path": str(clone_path) if clone_path is not None else None,
-                # Pre-computed AI summaries — served by GET /api/repos/{id}/summaries
+                # Flat summaries list — served by GET /api/repos/{id}/summaries
                 "summaries": summaries_list,
                 "updated_at": now,
             },

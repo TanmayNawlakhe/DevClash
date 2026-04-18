@@ -460,34 +460,65 @@ async def generate_file_summaries_from_disk(
 		user_payload = {
 			"repo_url": repo_url,
 			"task": (
-				"Generate a detailed, individual summary for each file listed below. "
-				"Use the actual source code provided under 'content' as the primary signal."
+				"For each file: (1) write a file-level summary, "
+				"(2) extract technical keywords, "
+				"(3) write a brief summary for every function/class listed in 'functions_to_summarize'."
 			),
 			"rules": [
-				"Read the 'content' field for each file to understand what it does.",
-				"Each summary must be exactly 5-6 short lines.",
-				"Use newline characters between lines inside the summary string.",
-				"Keep each line focused on one concrete aspect such as purpose, role, dependencies, entry-point behavior, risks, or how the file fits into the repository.",
-				"Do not use markdown bullets, numbering, or headings inside the summary.",
-				"If content is empty, fall back to filename, language, and dependency metadata.",
-				"Return strict JSON only — no markdown fences.",
+				"Read the 'content' field for each file to understand what it actually does.",
+				"Each file summary must be exactly 5-6 short lines separated by \\n.",
+				"Each function summary must be 2-3 sentences (max 30 words).",
+				"Keywords: extract 3-8 technical terms — frameworks, libraries, patterns, "
+				"protocols, or domain concepts (e.g. JWT, Redis, REST, pagination, middleware).",
+				"Keywords must be plain strings in a JSON array — no duplicates, no generic words like 'file' or 'code'.",
+				"Return strict JSON only — no markdown fences, no prose.",
 			],
-			"files": chunk,
+			"files": [],
 			"response_format": {
 				"summaries": [
-					{"path": "<exact path>", "summary": "<5-6 lines separated by \\n>"}
+					{
+						"path": "<exact path from allowed_paths>",
+						"file_summary": "<5-6 lines separated by \\n>",
+						"keywords": ["<keyword1>", "<keyword2>"],
+						"function_summaries": [
+							{"name": "<function name>", "summary": "<2-3 sentences>"}
+						],
+					}
 				]
 			},
 			"allowed_paths": allowed_paths,
 		}
 
+		# Rebuild file list cleanly
+		clean_files = []
+		for item in chunk:
+			node_data = next(
+				(n.get("data", {}) for n in nodes if str(n.get("id", "")) == item["path"]),
+				{}
+			)
+			raw_funcs = node_data.get("functions", [])
+			funcs_to_send = [
+				{
+					"name": f["name"],
+					"type": f.get("type", "function"),
+					"params": f.get("params", []),
+					"returns": f.get("returns"),
+				}
+				for f in raw_funcs
+				if f.get("name")
+			][:15]
+			clean_files.append({**item, "functions_to_summarize": funcs_to_send})
+		user_payload["files"] = clean_files
+
 		messages = [
 			{
 				"role": "system",
 				"content": (
-					"You are a senior software architect. Summarise each file individually "
-					"based on its source code. Return strict JSON with key 'summaries' — "
-					"no prose, no markdown fences."
+					"You are a senior software architect. For each file, produce: "
+					"(1) a file-level summary, "
+					"(2) a 'keywords' array of 3-8 technical terms from the file, "
+					"(3) a brief summary for every function/class in 'functions_to_summarize'. "
+					"Return strict JSON with key 'summaries' — no prose, no markdown fences."
 				),
 			},
 			{"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
@@ -521,8 +552,9 @@ async def generate_file_summaries_from_disk(
 			if not isinstance(item, dict):
 				continue
 			path = str(item.get("path", "")).strip()
-			summary = str(item.get("summary", "")).strip()
-			if not path or not summary:
+			# Accept either "file_summary" (new) or "summary" (old fallback)
+			file_summary = str(item.get("file_summary") or item.get("summary", "")).strip()
+			if not path or not file_summary:
 				continue
 			if path not in allowed_set:
 				logger.warning(
@@ -532,7 +564,31 @@ async def generate_file_summaries_from_disk(
 					path,
 				)
 				continue
-			summaries_by_path[path] = summary
+
+			# Parse keywords
+			raw_keywords = item.get("keywords", [])
+			keywords: list[str] = [
+				str(k).strip()
+				for k in (raw_keywords if isinstance(raw_keywords, list) else [])
+				if k and str(k).strip()
+			]
+
+			# Parse per-function summaries
+			raw_func_sums = item.get("function_summaries", [])
+			func_summaries: list[dict] = []
+			if isinstance(raw_func_sums, list):
+				for fs in raw_func_sums:
+					if isinstance(fs, dict) and fs.get("name") and fs.get("summary"):
+						func_summaries.append({
+							"name": str(fs["name"]).strip(),
+							"summary": str(fs["summary"]).strip(),
+						})
+
+			summaries_by_path[path] = {
+				"summary": file_summary,
+				"keywords": keywords,
+				"function_summaries": func_summaries,
+			}
 			batch_ok.append(path)
 
 		logger.info(
