@@ -1,9 +1,9 @@
-import { motion, useMotionTemplate, useScroll, useTransform } from 'framer-motion'
+import { AnimatePresence, motion, useInView, useMotionTemplate, useScroll, useTransform } from 'framer-motion'
 import {
   ArrowRight, Bot, Brain, CheckCircle2, ChevronRight, GitBranch,
   Radar, Route, Search, ShieldAlert, Sparkles, Star, Zap
 } from 'lucide-react'
-import { useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
@@ -40,9 +40,54 @@ const deepDives = [
 ]
 
 const steps = [
-  { step: '01', title: 'Paste URL', desc: 'Drop any GitHub repository URL into Gittsurī and let the engine take over.', icon: GitBranch },
-  { step: '02', title: 'Watch Analysis', desc: 'Follow parser, graph builder, AI summarizer, and priority ranker — live.', icon: Zap },
-  { step: '03', title: 'Explore Graph', desc: 'Click nodes, ask questions, trace ownership, and navigate like never before.', icon: Sparkles },
+  {
+    step: '01',
+    title: 'Paste URL',
+    desc: 'Drop any GitHub URL and instantly start a deep architecture scan.',
+    icon: GitBranch,
+    color: 'from-sky-500 to-indigo-500',
+    badge: 'Repo Intake',
+    command: '$ gittsuri analyze https://github.com/facebook/react',
+    output: [
+      'Validated repository access and branch metadata.',
+      'Cloned source snapshot and queued parser workers.',
+      'Detected 40+ languages across 9,842 files.',
+    ],
+    metricLabel: 'Files indexed',
+    metricValue: '9,842',
+  },
+  {
+    step: '02',
+    title: 'Watch Analysis',
+    desc: 'Parsers, graph builder, and AI ranking stream updates in real time.',
+    icon: Zap,
+    color: 'from-indigo-500 to-fuchsia-500',
+    badge: 'Live Pipeline',
+    command: '$ gittsuri stream --pipeline parser,graph,priority,ownership',
+    output: [
+      'Built dependency graph with weighted import edges.',
+      'Generated ownership map from commit history + CODEOWNERS.',
+      'Ranked onboarding files by centrality and complexity.',
+    ],
+    metricLabel: 'Modules mapped',
+    metricValue: '128',
+  },
+  {
+    step: '03',
+    title: 'Explore Graph',
+    desc: 'Traverse nodes, inspect flows, and ask natural-language questions.',
+    icon: Sparkles,
+    color: 'from-fuchsia-500 to-rose-500',
+    badge: 'Interactive Canvas',
+    command: '$ gittsuri open --view architecture --focus priority',
+    output: [
+      'Highlighted top-risk files with blast-radius overlays.',
+      'Rendered flow + ownership views from one shared graph model.',
+      'Enabled NL query mode for guided onboarding walkthroughs.',
+    ],
+    metricLabel: 'Hotspots surfaced',
+    metricValue: '23',
+  },
 ]
 
 const testimonials = [
@@ -51,11 +96,20 @@ const testimonials = [
   { quote: 'Ownership view answered who to ask in literal seconds.', role: 'Staff Engineer', company: 'Linear', rating: 5 },
 ]
 
+const HERO_TYPEWRITER_WORDS = ['repo', 'monolith', 'frontend', 'backend', 'service']
+
 export function Landing() {
   const navigate = useNavigate()
   const heroRef = useRef<HTMLDivElement>(null)
+  const howSectionRef = useRef<HTMLElement>(null)
+  const [typedWord, setTypedWord] = useState('')
+  const [activeWordIndex, setActiveWordIndex] = useState(0)
+  const [isDeletingWord, setIsDeletingWord] = useState(false)
+  const [activeHowStep, setActiveHowStep] = useState(0)
+  const [isHowPaused, setIsHowPaused] = useState(false)
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] })
   const { scrollY } = useScroll()
+  const isHowInView = useInView(howSectionRef, { amount: 0.35 })
   const heroY = useTransform(scrollYProgress, [0, 1], [0, -80])
   const heroOpacity = useTransform(scrollYProgress, [0, 0.6], [1, 0])
   const navProgress = useTransform(scrollY, [0, 120], [0, 1])
@@ -74,6 +128,53 @@ export function Landing() {
   const navBgOpacity = useTransform(navProgress, [0, 1], [0, 0.98])
   const navBorder = useMotionTemplate`1px solid rgba(196, 205, 236, ${navBorderOpacity})`
   const navBackground = useMotionTemplate`rgba(249, 251, 255, ${navBgOpacity})`
+
+  useEffect(() => {
+    const currentWord = HERO_TYPEWRITER_WORDS[activeWordIndex]
+    const isWordComplete = typedWord === currentWord
+    const isWordEmpty = typedWord.length === 0
+
+    const nextDelay = isWordComplete
+      ? 1050
+      : isDeletingWord
+        ? 50
+        : 85
+
+    const timer = window.setTimeout(() => {
+      if (!isDeletingWord) {
+        if (!isWordComplete) {
+          setTypedWord(currentWord.slice(0, typedWord.length + 1))
+          return
+        }
+        setIsDeletingWord(true)
+        return
+      }
+
+      if (!isWordEmpty) {
+        setTypedWord(currentWord.slice(0, typedWord.length - 1))
+        return
+      }
+
+      setIsDeletingWord(false)
+      setActiveWordIndex((idx) => (idx + 1) % HERO_TYPEWRITER_WORDS.length)
+    }, nextDelay)
+
+    return () => window.clearTimeout(timer)
+  }, [activeWordIndex, isDeletingWord, typedWord])
+
+  useEffect(() => {
+    if (!isHowInView || isHowPaused) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setActiveHowStep((prev) => (prev + 1) % steps.length)
+    }, 3200)
+
+    return () => window.clearInterval(timer)
+  }, [isHowInView, isHowPaused])
+
+  const activeHowStepItem = steps[activeHowStep]
 
   return (
     <div className="bg-background text-foreground overflow-x-hidden">
@@ -169,9 +270,12 @@ export function Landing() {
                 variants={fadeUp}
                 className="font-heading text-5xl font-bold leading-[1.08] tracking-tight text-balance md:text-6xl lg:text-7xl"
               >
-                Understand any{' '}
-                <span className="brand-gradient-text">codebase</span>{' '}
-                in 10 minutes.
+                Decode any{' '}
+                <span className="brand-gradient-text inline-flex min-w-[10.4ch] items-baseline justify-start">
+                  {typedWord || ' '}
+                  <span className="ml-1 inline-block h-[0.9em] w-[2px] rounded-full bg-primary animate-pulse" />
+                </span>{' '}
+                before your first coffee cools.
               </motion.h1>
 
               <motion.p
@@ -309,41 +413,179 @@ export function Landing() {
         {/* ══════════════════════════════════════
             HOW IT WORKS
         ══════════════════════════════════════ */}
-        <section className="noise-section relative overflow-hidden border-y border-border bg-gradient-to-br from-slate-50 via-indigo-50/40 to-violet-50/30 px-5 py-24">
+        <section
+          ref={howSectionRef}
+          className="noise-section relative overflow-hidden border-y border-border bg-gradient-to-br from-slate-50 via-indigo-50/40 to-violet-50/30 px-5 py-24"
+        >
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute -left-24 top-10 size-72 rounded-full bg-primary/10 blur-3xl"
+            animate={{ x: [0, 36, 0], y: [0, -12, 0], opacity: [0.3, 0.45, 0.3] }}
+            transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute -right-20 bottom-8 size-80 rounded-full bg-primary/10 blur-3xl"
+            animate={{ x: [0, -28, 0], y: [0, 10, 0], opacity: [0.26, 0.4, 0.26] }}
+            transition={{ duration: 11, repeat: Infinity, ease: 'easeInOut' }}
+          />
           <div className="mx-auto max-w-7xl">
             <SectionHeading
               eyebrow="How It Works"
               title="Three steps to clarity."
               subtitle="From URL to interactive architecture map in under 60 seconds."
             />
-            <div className="mt-14 grid gap-6 md:grid-cols-3">
-              {steps.map((item, index) => (
-                <motion.div
-                  key={item.step}
-                  initial={{ opacity: 0, y: 24 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: index * 0.12, duration: 0.5 }}
-                  className="relative"
-                >
-                  {index < steps.length - 1 && (
-                    <div className="absolute left-full top-10 z-10 hidden w-full items-center md:flex">
-                      <div className="h-px flex-1 bg-gradient-to-r from-border to-transparent" />
-                      <ChevronRight className="size-4 shrink-0 text-border" />
+            <div className="mt-10 flex items-center justify-between gap-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-white/75 px-3 py-1.5 backdrop-blur">
+                <span className={`inline-flex size-2 rounded-full ${isHowPaused ? 'bg-amber-500' : 'animate-pulse bg-emerald-500'}`} />
+                <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-primary/80">
+                  {isHowPaused ? 'Playback Paused' : 'Live Auto Tour'}
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setIsHowPaused((prev) => !prev)}
+                className="min-w-24"
+              >
+                {isHowPaused ? 'Resume' : 'Pause'}
+              </Button>
+            </div>
+
+            <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+              <div
+                className="space-y-4"
+                onMouseEnter={() => setIsHowPaused(true)}
+                onMouseLeave={() => setIsHowPaused(false)}
+              >
+                {steps.map((item, index) => {
+                  const isActive = index === activeHowStep
+                  return (
+                    <motion.button
+                      key={item.step}
+                      type="button"
+                      initial={{ opacity: 0, x: -18 }}
+                      whileInView={{ opacity: 1, x: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: index * 0.08, duration: 0.45 }}
+                      onMouseEnter={() => setActiveHowStep(index)}
+                      onFocus={() => setActiveHowStep(index)}
+                      onClick={() => setActiveHowStep(index)}
+                      className={`group relative w-full overflow-hidden rounded-2xl border p-6 text-left transition-all duration-300 ${
+                        isActive
+                          ? 'border-primary/50 bg-white shadow-lg shadow-primary/12'
+                          : 'border-border bg-white/80 hover:border-primary/30 hover:bg-white/95'
+                      }`}
+                      animate={isActive ? { y: -2, scale: 1.01 } : { y: 0, scale: 1 }}
+                    >
+                      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" style={{
+                        background: `linear-gradient(120deg, transparent 0%, rgba(99,102,241,0.08) 50%, transparent 100%)`,
+                      }} />
+                      <div className="relative flex items-start gap-4">
+                        <span className="font-mono text-5xl leading-none text-primary/14">{item.step}</span>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <h3 className="text-lg font-bold">{item.title}</h3>
+                            <div className={`inline-flex size-10 items-center justify-center rounded-xl bg-linear-to-br ${item.color} shadow-md shadow-primary/15`}>
+                              <item.icon className="size-5 text-white" />
+                            </div>
+                          </div>
+                          <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{item.desc}</p>
+                          <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-primary/10">
+                            <motion.div
+                              className="h-full rounded-full bg-linear-to-r from-primary to-primary/60"
+                              animate={{ width: isActive ? '100%' : '32%' }}
+                              transition={{ duration: isActive ? 3.0 : 0.35, ease: 'easeInOut' }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </motion.button>
+                  )
+                })}
+              </div>
+
+              <motion.div
+                layout
+                onMouseEnter={() => setIsHowPaused(true)}
+                onMouseLeave={() => setIsHowPaused(false)}
+                className="relative overflow-hidden rounded-3xl border border-primary/20 bg-slate-950 p-5 text-slate-100 shadow-2xl shadow-primary/20"
+              >
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="size-2.5 rounded-full bg-rose-400/80" />
+                    <span className="size-2.5 rounded-full bg-amber-400/80" />
+                    <span className="size-2.5 rounded-full bg-emerald-400/80" />
+                  </div>
+                  <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-slate-400">Interactive Demo</span>
+                </div>
+
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={activeHowStepItem.step}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.28 }}
+                    className="mt-4"
+                  >
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <span className="rounded-full border border-primary/35 bg-primary/15 px-2.5 py-1 font-mono text-[11px] font-semibold uppercase tracking-wider text-primary-foreground/90">
+                        {activeHowStepItem.badge}
+                      </span>
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+                        Step {activeHowStepItem.step} / 03
+                      </span>
                     </div>
-                  )}
-                  <div className="rounded-2xl border border-border bg-white/80 p-7 shadow-sm backdrop-blur-sm">
-                    <div className="mb-5 flex items-center gap-4">
-                      <span className="font-mono text-5xl font-bold text-primary/12 leading-none">{item.step}</span>
-                      <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-                        <item.icon className="size-5 text-primary" />
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 font-mono text-xs text-primary">
+                      {activeHowStepItem.command}
+                    </div>
+
+                    <div className="mt-4 space-y-2.5">
+                      {activeHowStepItem.output.map((line, idx) => (
+                        <motion.div
+                          key={`${activeHowStepItem.step}-${line}`}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: idx * 0.08 }}
+                          className="flex items-start gap-2"
+                        >
+                          <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />
+                          <span className="text-sm text-slate-200/92">{line}</span>
+                        </motion.div>
+                      ))}
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                        <p className="font-mono text-[11px] uppercase tracking-wider text-slate-400">{activeHowStepItem.metricLabel}</p>
+                        <motion.p
+                          key={`metric-${activeHowStepItem.step}`}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="mt-1 font-heading text-2xl font-bold text-white"
+                        >
+                          {activeHowStepItem.metricValue}
+                        </motion.p>
+                      </div>
+                      <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                        <p className="font-mono text-[11px] uppercase tracking-wider text-slate-400">Pipeline</p>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-700">
+                          <motion.div
+                            className="h-full rounded-full bg-linear-to-r from-primary via-indigo-400 to-fuchsia-400"
+                            animate={{ width: `${((activeHowStep + 1) / steps.length) * 100}%` }}
+                            transition={{ duration: 0.45, ease: 'easeOut' }}
+                          />
+                        </div>
+                        <p className="mt-2 font-mono text-[11px] uppercase tracking-wider text-slate-300">
+                          {activeHowStep + 1}/{steps.length} stages active
+                        </p>
                       </div>
                     </div>
-                    <h3 className="text-xl font-bold">{item.title}</h3>
-                    <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{item.desc}</p>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                </AnimatePresence>
+              </motion.div>
             </div>
           </div>
         </section>
@@ -656,42 +898,104 @@ function GraphMockup() {
 }
 
 // ── Inverted dependency tree with file-name boxes ─────────────────────────
-const FILE_NODES = [
-  { id: 0, x: 250, y: 32,  label: 'index.tsx',    level: 0, delay: 0    },
-  { id: 1, x: 92,  y: 112, label: 'router.tsx',   level: 1, delay: 0.40 },
-  { id: 2, x: 250, y: 112, label: 'GraphCanvas',  level: 1, delay: 0.60 },
-  { id: 3, x: 408, y: 112, label: 'apiService',   level: 1, delay: 0.80 },
-  { id: 4, x: 42,  y: 200, label: 'AppShell',     level: 2, delay: 0.95 },
-  { id: 5, x: 125, y: 200, label: 'Layout',       level: 2, delay: 1.10 },
-  { id: 6, x: 208, y: 200, label: 'graphStore',   level: 2, delay: 1.25 },
-  { id: 7, x: 292, y: 200, label: 'NodeCustom',   level: 2, delay: 1.40 },
-  { id: 8, x: 375, y: 200, label: 'repoService',  level: 2, delay: 1.55 },
-  { id: 9, x: 458, y: 200, label: 'types.ts',     level: 2, delay: 1.70 },
+type TreeLevel = 0 | 1 | 2 | 3
+
+type TreeNode = {
+  id: number
+  x: number
+  y: number
+  label: string
+  level: TreeLevel
+  delay: number
+}
+
+type TreeEdge = {
+  from: number
+  to: number
+  delay: number
+}
+
+const FILE_NODES: TreeNode[] = [
+  { id: 0, x: 380, y: 36,  label: 'index.tsx',          level: 0, delay: 0.00 },
+  { id: 1, x: 144, y: 124, label: 'router.tsx',         level: 1, delay: 0.35 },
+  { id: 2, x: 380, y: 124, label: 'GraphCanvas.tsx',    level: 1, delay: 0.50 },
+  { id: 3, x: 616, y: 124, label: 'apiService.ts',      level: 1, delay: 0.65 },
+  { id: 4, x: 85,  y: 212, label: 'AppShell.tsx',       level: 2, delay: 0.80 },
+  { id: 5, x: 203, y: 212, label: 'layout.tsx',         level: 2, delay: 0.90 },
+  { id: 6, x: 321, y: 212, label: 'graphStore.ts',      level: 2, delay: 1.00 },
+  { id: 7, x: 439, y: 212, label: 'NodeCustom.tsx',     level: 2, delay: 1.10 },
+  { id: 8, x: 557, y: 212, label: 'repoService.ts',     level: 2, delay: 1.20 },
+  { id: 9, x: 675, y: 212, label: 'types.ts',           level: 2, delay: 1.30 },
+  { id: 10, x: 85,  y: 296, label: 'Sidebar.tsx',       level: 3, delay: 1.40 },
+  { id: 11, x: 203, y: 296, label: 'Topbar.tsx',        level: 3, delay: 1.48 },
+  { id: 12, x: 321, y: 296, label: 'useGraph.ts',       level: 3, delay: 1.56 },
+  { id: 13, x: 439, y: 296, label: 'graphUtils.ts',     level: 3, delay: 1.64 },
+  { id: 14, x: 557, y: 296, label: 'api.ts',            level: 3, delay: 1.72 },
+  { id: 15, x: 675, y: 296, label: 'types/index.ts',    level: 3, delay: 1.80 },
 ]
 
-const FILE_EDGES = [
-  { d: 'M250,32 C250,72 92,72 92,112',      delay: 0.18 },
-  { d: 'M250,32 C250,72 250,72 250,112',    delay: 0.23 },
-  { d: 'M250,32 C250,72 408,72 408,112',    delay: 0.28 },
-  { d: 'M92,112 C92,156 42,156 42,200',     delay: 0.68 },
-  { d: 'M92,112 C92,156 125,156 125,200',   delay: 0.73 },
-  { d: 'M250,112 C250,156 208,156 208,200', delay: 0.88 },
-  { d: 'M250,112 C250,156 292,156 292,200', delay: 0.93 },
-  { d: 'M408,112 C408,156 375,156 375,200', delay: 1.08 },
-  { d: 'M408,112 C408,156 458,156 458,200', delay: 1.13 },
+const FILE_EDGES: TreeEdge[] = [
+  { from: 0, to: 1, delay: 0.16 },
+  { from: 0, to: 2, delay: 0.22 },
+  { from: 0, to: 3, delay: 0.28 },
+  { from: 1, to: 4, delay: 0.52 },
+  { from: 1, to: 5, delay: 0.58 },
+  { from: 2, to: 6, delay: 0.64 },
+  { from: 2, to: 7, delay: 0.70 },
+  { from: 3, to: 8, delay: 0.76 },
+  { from: 3, to: 9, delay: 0.82 },
+  { from: 4, to: 10, delay: 0.96 },
+  { from: 5, to: 11, delay: 1.02 },
+  { from: 6, to: 12, delay: 1.08 },
+  { from: 7, to: 13, delay: 1.14 },
+  { from: 8, to: 14, delay: 1.20 },
+  { from: 9, to: 15, delay: 1.26 },
 ]
 
-const BOX_CFG = [
-  { w: 100, h: 28, rx: 8, fontSize: 12   },
-  { w:  90, h: 25, rx: 7, fontSize: 11   },
-  { w:  74, h: 22, rx: 6, fontSize: 10   },
-]
+const BOX_CFG: Record<TreeLevel, { minW: number; maxW: number; h: number; rx: number; fontSize: number }> = {
+  0: { minW: 140, maxW: 176, h: 36, rx: 10, fontSize: 12.5 },
+  1: { minW: 122, maxW: 160, h: 34, rx: 9,  fontSize: 11.5 },
+  2: { minW: 102, maxW: 140, h: 31, rx: 8,  fontSize: 10.5 },
+  3: { minW: 92,  maxW: 128, h: 28, rx: 7,  fontSize: 10 },
+}
+
+function getNodeWidth(label: string, level: TreeLevel) {
+  const cfg = BOX_CFG[level]
+  const roughCharWidth = level === 0 ? 7.2 : level === 1 ? 6.8 : 6.2
+  const rawWidth = label.length * roughCharWidth + 24
+  return Math.min(cfg.maxW, Math.max(cfg.minW, rawWidth))
+}
 
 function InvertedTree() {
+  const [isRootHovered, setIsRootHovered] = useState(false)
+
+  const nodeById = useMemo(
+    () => new Map(FILE_NODES.map((node) => [node.id, node])),
+    [],
+  )
+
+  const edgePaths = useMemo(
+    () =>
+      FILE_EDGES.map((edge) => {
+        const from = nodeById.get(edge.from)!
+        const to = nodeById.get(edge.to)!
+        const fromH = BOX_CFG[from.level].h
+        const toH = BOX_CFG[to.level].h
+        const startY = from.y + fromH / 2
+        const endY = to.y - toH / 2
+        const midY = (startY + endY) / 2
+        return {
+          ...edge,
+          d: `M${from.x},${startY} C${from.x},${midY} ${to.x},${midY} ${to.x},${endY}`,
+        }
+      }),
+    [nodeById],
+  )
+
   return (
     <div className="relative h-full w-full">
       <svg
-        viewBox="0 0 500 250"
+        viewBox="0 0 760 332"
         className="h-full w-full"
         preserveAspectRatio="xMidYMid meet"
         style={{ overflow: 'visible' }}
@@ -701,95 +1005,144 @@ function InvertedTree() {
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
+          <filter id="hero-flow-glow" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="2.2" result="flowBlur" />
+            <feMerge><feMergeNode in="flowBlur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
         </defs>
 
-        {/* Edges — draw themselves along the path */}
-        {FILE_EDGES.map((edge, i) => (
+        {/* Base edges */}
+        {edgePaths.map((edge, i) => (
           <motion.path
-            key={i}
+            key={`${edge.from}-${edge.to}`}
             d={edge.d}
             stroke="var(--primary)"
-            strokeWidth="1.5"
-            strokeOpacity="0.28"
+            strokeWidth="1.45"
             fill="none"
             strokeLinecap="round"
             initial={{ pathLength: 0, opacity: 0 }}
-            animate={{ pathLength: 1, opacity: 1 }}
-            transition={{ delay: edge.delay, duration: 0.5, ease: 'easeOut' }}
+            animate={{
+              pathLength: 1,
+              opacity: isRootHovered ? 0.42 : 0.24,
+            }}
+            transition={{
+              delay: edge.delay,
+              duration: 0.52,
+              ease: 'easeOut',
+            }}
+          />
+        ))}
+
+        {/* Hover flow layer from root */}
+        {edgePaths.map((edge, i) => (
+          <motion.path
+            key={`flow-${edge.from}-${edge.to}`}
+            d={edge.d}
+            stroke="var(--primary)"
+            strokeWidth="2"
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray="8 10"
+            filter="url(#hero-flow-glow)"
+            initial={{ opacity: 0 }}
+            animate={
+              isRootHovered
+                ? {
+                    opacity: [0.12, 0.78, 0.12],
+                    strokeDashoffset: [0, -48],
+                  }
+                : {
+                    opacity: 0,
+                    strokeDashoffset: 0,
+                  }
+            }
+            transition={
+              isRootHovered
+                ? {
+                    duration: 1.15,
+                    repeat: Infinity,
+                    ease: 'linear',
+                    delay: i * 0.045,
+                  }
+                : { duration: 0.2 }
+            }
           />
         ))}
 
         {/* File-name box nodes */}
         {FILE_NODES.map((node) => {
           const cfg = BOX_CFG[node.level]
-          const isRoot = node.level === 0
-          const isL1   = node.level === 1
-          const hw = cfg.w / 2
+          const width = getNodeWidth(node.label, node.level)
+          const hw = width / 2
           const hh = cfg.h / 2
+          const isRoot = node.level === 0
+          const isL1 = node.level === 1
           return (
             <motion.g
               key={node.id}
-              initial={{ opacity: 0, scale: 0.55 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0, scale: 0.58 }}
+              animate={{ opacity: 1, scale: isRoot && isRootHovered ? 1.03 : 1 }}
               style={{ transformOrigin: `${node.x}px ${node.y}px` }}
               transition={{
                 delay: node.delay,
                 duration: 0.45,
                 type: 'spring',
-                stiffness: 280,
-                damping: 22,
+                stiffness: 290,
+                damping: 24,
               }}
+              onHoverStart={isRoot ? () => setIsRootHovered(true) : undefined}
+              onHoverEnd={isRoot ? () => setIsRootHovered(false) : undefined}
+              className={isRoot ? 'cursor-pointer' : undefined}
             >
-              {/* Halo glow behind root */}
               {isRoot && (
                 <rect
-                  x={node.x - hw - 5} y={node.y - hh - 5}
-                  width={cfg.w + 10} height={cfg.h + 10}
-                  rx={cfg.rx + 4}
-                  fill="var(--primary)" fillOpacity="0.14"
+                  x={node.x - hw - 6}
+                  y={node.y - hh - 6}
+                  width={width + 12}
+                  height={cfg.h + 12}
+                  rx={cfg.rx + 5}
+                  fill="var(--primary)"
+                  fillOpacity={isRootHovered ? 0.2 : 0.13}
                   style={{ filter: 'blur(7px)' }}
                 />
               )}
 
-              {/* Box */}
               <rect
-                x={node.x - hw} y={node.y - hh}
-                width={cfg.w} height={cfg.h}
+                x={node.x - hw}
+                y={node.y - hh}
+                width={width}
+                height={cfg.h}
                 rx={cfg.rx}
                 fill="white"
-                fillOpacity={isRoot ? 1 : isL1 ? 0.94 : 0.88}
+                fillOpacity={isRoot ? 1 : isL1 ? 0.94 : 0.90}
                 stroke={isRoot ? 'var(--primary)' : 'var(--border)'}
-                strokeWidth={isRoot ? 1.5 : 1}
+                strokeWidth={isRoot ? 1.6 : 1}
                 filter={isRoot ? 'url(#hero-glow)' : undefined}
               />
 
-              {/* Tinted overlay for root */}
               {isRoot && (
                 <rect
-                  x={node.x - hw} y={node.y - hh}
-                  width={cfg.w} height={cfg.h}
+                  x={node.x - hw}
+                  y={node.y - hh}
+                  width={width}
+                  height={cfg.h}
                   rx={cfg.rx}
-                  fill="var(--primary)" fillOpacity="0.07"
+                  fill="var(--primary)"
+                  fillOpacity={isRootHovered ? 0.11 : 0.07}
                 />
               )}
 
-              {/* File-type dot */}
-              <circle
-                cx={node.x - hw + 10} cy={node.y}
-                r={isRoot ? 3 : 2.5}
-                fill={isRoot ? 'var(--primary)' : '#94a3b8'}
-                fillOpacity={isRoot ? 1 : 0.65}
-              />
-
-              {/* Label */}
               <text
-                x={node.x - hw + 19}
-                y={node.y + cfg.fontSize * 0.36}
+                x={node.x}
+                y={node.y}
+                textAnchor="middle"
+                dominantBaseline="middle"
                 fill={isRoot ? 'var(--primary)' : 'var(--foreground)'}
                 fontSize={cfg.fontSize}
                 fontFamily="ui-monospace, 'Cascadia Code', Menlo, monospace"
-                fontWeight={isRoot ? 600 : 400}
-                fillOpacity={isRoot ? 1 : isL1 ? 0.85 : 0.70}
+                fontWeight={isRoot ? 650 : 500}
+                letterSpacing={node.level >= 2 ? '0.15px' : '0.1px'}
+                fillOpacity={isRoot ? 1 : isL1 ? 0.86 : 0.74}
               >
                 {node.label}
               </text>
@@ -797,17 +1150,35 @@ function InvertedTree() {
           )
         })}
 
-        {/* Pulsing outer ring on root — starts after entry animation */}
-        <motion.rect
-          x={250 - 57} y={32 - 19}
-          width={114} height={38}
-          rx={12}
-          fill="none"
-          stroke="var(--primary)"
-          strokeWidth="1"
-          animate={{ strokeOpacity: [0.45, 0, 0.45] }}
-          transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut', delay: 1.4 }}
-        />
+        {/* Root pulse ring appears strongest on hover */}
+        {(() => {
+          const root = FILE_NODES[0]
+          const rootCfg = BOX_CFG[root.level]
+          const rootW = getNodeWidth(root.label, root.level)
+          return (
+            <motion.rect
+              x={root.x - rootW / 2 - 10}
+              y={root.y - rootCfg.h / 2 - 10}
+              width={rootW + 20}
+              height={rootCfg.h + 20}
+              rx={rootCfg.rx + 8}
+              fill="none"
+              stroke="var(--primary)"
+              strokeWidth="1"
+              animate={{
+                strokeOpacity: isRootHovered ? [0.72, 0.08, 0.72] : [0.38, 0.02, 0.38],
+                scale: isRootHovered ? [1, 1.04, 1] : [1, 1.02, 1],
+              }}
+              style={{ transformOrigin: `${root.x}px ${root.y}px` }}
+              transition={{
+                duration: isRootHovered ? 1.05 : 2.5,
+                repeat: Infinity,
+                ease: 'easeInOut',
+                delay: 1.0,
+              }}
+            />
+          )
+        })()}
       </svg>
     </div>
   )

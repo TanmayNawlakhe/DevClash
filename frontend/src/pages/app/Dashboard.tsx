@@ -28,7 +28,7 @@ export function Dashboard() {
       variants={stagger}
       initial="hidden"
       animate="visible"
-      className="space-y-8 p-5 lg:p-8"
+      className="mx-auto w-full max-w-[1480px] space-y-8 px-4 py-5 sm:px-5 lg:px-8"
     >
       {/* ── Welcome banner ── */}
       <motion.div variants={fadeUp}>
@@ -113,8 +113,8 @@ export function Dashboard() {
       </motion.section>
 
       {/* ── Repos + Chart ── */}
-      <motion.section variants={fadeUp} className="grid gap-6 xl:grid-cols-[1fr_0.7fr]">
-        <div>
+      <motion.section variants={fadeUp} className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)]">
+        <div className="min-w-0">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="font-heading text-xl font-bold">Recent Repos</h2>
@@ -129,7 +129,7 @@ export function Dashboard() {
           </div>
           <RecentReposTable repos={repos} />
         </div>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <AnalysisStatsChart />
           {/* Quick actions */}
           <div className="rounded-2xl border border-border bg-card p-4">

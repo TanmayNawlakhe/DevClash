@@ -28,7 +28,7 @@ export function AppShell() {
     <div className="app-surface flex min-h-dvh text-foreground">
       <Sidebar />
       <MobileNav />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 overflow-x-hidden">
         <Topbar />
         <AnimatePresence mode="wait">
           <motion.main
