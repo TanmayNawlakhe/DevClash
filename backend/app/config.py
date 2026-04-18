@@ -9,6 +9,8 @@ class Settings:
     mongodb_db_name: str = os.getenv("MONGODB_DB_NAME", "repomap")
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    repo_clone_base_dir: str = os.getenv("REPO_CLONE_BASE_DIR", ".repo_cache")
+    clone_timeout_seconds: int = int(os.getenv("CLONE_TIMEOUT_SECONDS", "120"))
 
 
 settings = Settings()
