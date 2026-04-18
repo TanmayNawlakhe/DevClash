@@ -1,40 +1,34 @@
-import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.config import settings
 from app.db.mongodb import get_database
 from app.schemas.repo import (
+    RepoActionResponse,
     RepoCreateRequest,
+    RepoFileDetailResponse,
     RepoGraphResponse,
+    RepoListResponse,
     RepoStatusResponse,
     RepoSubmitResponse,
 )
-from app.services.repo_analyzer import (
-    analyze_repository_graph,
-    is_supported_github_url,
-    normalize_github_url,
-)
+from app.services.repo_analyzer import is_supported_github_url, normalize_github_url
+from app.services.repo_job_processor import enqueue_repo_job, remove_repo_job_from_queue
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__, level=settings.log_level)
 router = APIRouter(prefix="/api/repos", tags=["repos"])
 
-_ANALYSIS_TASKS: set[asyncio.Task[Any]] = set()
-
 
 async def ensure_repo_indexes() -> None:
     db = get_database()
     await db["repos"].create_index("github_url", unique=True)
+    await db["repos"].create_index("created_at")
+    await db["repos"].create_index("status")
     await db["graphs"].create_index("repo_id", unique=True)
-
-
-def _track_task(task: asyncio.Task[Any]) -> None:
-    _ANALYSIS_TASKS.add(task)
-    task.add_done_callback(_ANALYSIS_TASKS.discard)
 
 
 def _to_object_id(repo_id: str) -> ObjectId:
@@ -57,7 +51,61 @@ def _serialize_repo_status(doc: dict[str, Any]) -> RepoStatusResponse:
         error_msg=doc.get("error_msg"),
         node_count=doc.get("node_count"),
         edge_count=doc.get("edge_count"),
+        progress=doc.get("progress"),
     )
+
+
+def _progress_payload(stage: str, percent: int, current_file: str | None = None) -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "percent": max(0, min(percent, 100)),
+        "current_file": current_file,
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+
+def _filter_graph_payload(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    language: str | None,
+    path_prefix: str | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not language and not path_prefix:
+        return nodes, edges
+
+    language_norm = language.strip().lower() if language else None
+    prefix_norm = path_prefix.strip() if path_prefix else None
+
+    filtered_nodes: list[dict[str, Any]] = []
+    for node in nodes:
+        data = node.get("data", {})
+        node_language = str(data.get("language", "")).lower()
+        node_path = str(data.get("path", ""))
+
+        if language_norm and node_language != language_norm:
+            continue
+        if prefix_norm and not node_path.startswith(prefix_norm):
+            continue
+        filtered_nodes.append(node)
+
+    allowed_node_ids = {node.get("id") for node in filtered_nodes}
+    filtered_edges = [
+        edge
+        for edge in edges
+        if edge.get("source") in allowed_node_ids and edge.get("target") in allowed_node_ids
+    ]
+    return filtered_nodes, filtered_edges
+
+
+@router.get("", response_model=RepoListResponse)
+async def list_recent_repos(
+    limit: int = Query(default=20, ge=1, le=100),
+) -> RepoListResponse:
+    db = get_database()
+    cursor = db["repos"].find().sort("created_at", -1).limit(limit)
+    docs = await cursor.to_list(length=limit)
+    items = [_serialize_repo_status(doc) for doc in docs]
+    return RepoListResponse(items=items)
 
 
 @router.post("", response_model=RepoSubmitResponse)
@@ -73,7 +121,7 @@ async def submit_repo(request: RepoCreateRequest) -> RepoSubmitResponse:
     repos_collection = db["repos"]
 
     existing = await repos_collection.find_one({"github_url": github_url})
-    if existing and existing.get("status") in {"pending", "analyzing", "complete"}:
+    if existing and existing.get("status") in {"pending", "analyzing", "cancelling", "complete"}:
         return RepoSubmitResponse(
             repo_id=str(existing["_id"]),
             github_url=existing["github_url"],
@@ -88,10 +136,12 @@ async def submit_repo(request: RepoCreateRequest) -> RepoSubmitResponse:
             {"_id": repo_object_id},
             {
                 "$set": {
-                    "status": "analyzing",
+                    "status": "pending",
                     "created_at": now,
                     "completed_at": None,
                     "error_msg": None,
+                    "cancel_requested": False,
+                    "progress": _progress_payload("queued", 0),
                 }
             },
         )
@@ -99,21 +149,22 @@ async def submit_repo(request: RepoCreateRequest) -> RepoSubmitResponse:
         insert_result = await repos_collection.insert_one(
             {
                 "github_url": github_url,
-                "status": "analyzing",
+                "status": "pending",
                 "created_at": now,
                 "completed_at": None,
                 "error_msg": None,
+                "cancel_requested": False,
+                "progress": _progress_payload("queued", 0),
             }
         )
         repo_object_id = insert_result.inserted_id
 
-    task = asyncio.create_task(_analyze_and_store(repo_object_id, github_url))
-    _track_task(task)
+    await enqueue_repo_job(str(repo_object_id))
 
     return RepoSubmitResponse(
         repo_id=str(repo_object_id),
         github_url=github_url,
-        status="analyzing",
+        status="pending",
     )
 
 
@@ -133,7 +184,11 @@ async def get_repo_status(repo_id: str) -> RepoStatusResponse:
 
 
 @router.get("/{repo_id}/graph", response_model=RepoGraphResponse)
-async def get_repo_graph(repo_id: str) -> RepoGraphResponse:
+async def get_repo_graph(
+    repo_id: str,
+    language: str | None = Query(default=None),
+    path_prefix: str | None = Query(default=None),
+) -> RepoGraphResponse:
     repo_object_id = _to_object_id(repo_id)
     db = get_database()
 
@@ -157,64 +212,194 @@ async def get_repo_graph(repo_id: str) -> RepoGraphResponse:
             detail="Graph document was not found for this repository",
         )
 
+    nodes = graph_doc.get("nodes", [])
+    edges = graph_doc.get("edges", [])
+    filtered_nodes, filtered_edges = _filter_graph_payload(
+        nodes=nodes,
+        edges=edges,
+        language=language,
+        path_prefix=path_prefix,
+    )
+
+    meta = dict(graph_doc.get("meta", {}))
+    if language or path_prefix:
+        meta["filtered"] = True
+        meta["originalNodeCount"] = len(nodes)
+        meta["originalEdgeCount"] = len(edges)
+        meta["nodeCount"] = len(filtered_nodes)
+        meta["edgeCount"] = len(filtered_edges)
+
     return RepoGraphResponse(
         repo_id=repo_id,
-        nodes=graph_doc.get("nodes", []),
-        edges=graph_doc.get("edges", []),
-        meta=graph_doc.get("meta", {}),
+        nodes=filtered_nodes,
+        edges=filtered_edges,
+        meta=meta,
     )
 
 
-async def _analyze_and_store(repo_object_id: ObjectId, github_url: str) -> None:
+@router.get("/{repo_id}/files/{file_path:path}", response_model=RepoFileDetailResponse)
+async def get_repo_file_detail(repo_id: str, file_path: str) -> RepoFileDetailResponse:
     db = get_database()
     repos_collection = db["repos"]
-    graphs_collection = db["graphs"]
+    graph_collection = db["graphs"]
+    repo_object_id = _to_object_id(repo_id)
 
-    try:
-        graph_payload = await analyze_repository_graph(
-            github_url=github_url,
-            clone_base_dir=settings.repo_clone_base_dir,
-            clone_timeout_seconds=settings.clone_timeout_seconds,
+    repo_doc = await repos_collection.find_one({"_id": repo_object_id})
+    if not repo_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository analysis job not found",
         )
 
-        now = datetime.now(timezone.utc)
-
-        await graphs_collection.replace_one(
-            {"repo_id": repo_object_id},
-            {
-                "repo_id": repo_object_id,
-                "nodes": graph_payload["nodes"],
-                "edges": graph_payload["edges"],
-                "meta": graph_payload["meta"],
-                "updated_at": now,
-            },
-            upsert=True,
+    if repo_doc.get("status") != "complete":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Repository graph is not ready yet (status: {repo_doc.get('status')})",
         )
 
+    graph_doc = await graph_collection.find_one({"repo_id": repo_object_id})
+    if not graph_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Graph document was not found for this repository",
+        )
+
+    nodes: list[dict[str, Any]] = graph_doc.get("nodes", [])
+    edges: list[dict[str, Any]] = graph_doc.get("edges", [])
+
+    node_map = {str(node.get("id")): node for node in nodes}
+    selected_node = node_map.get(file_path)
+
+    if not selected_node:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File path not found in graph",
+        )
+
+    imports = sorted(
+        str(edge.get("target")) for edge in edges if str(edge.get("source")) == file_path
+    )
+    dependents = sorted(
+        str(edge.get("source")) for edge in edges if str(edge.get("target")) == file_path
+    )
+
+    data = selected_node.get("data", {})
+    return RepoFileDetailResponse(
+        repo_id=repo_id,
+        file_path=file_path,
+        language=str(data.get("language", "unknown")),
+        in_degree=int(data.get("inDegree", 0)),
+        out_degree=int(data.get("outDegree", 0)),
+        is_entry=bool(data.get("isEntry", False)),
+        is_orphan=bool(data.get("isOrphan", False)),
+        imports=imports,
+        dependents=dependents,
+    )
+
+
+@router.post("/{repo_id}/cancel", response_model=RepoActionResponse)
+async def cancel_repo_job(repo_id: str) -> RepoActionResponse:
+    repo_object_id = _to_object_id(repo_id)
+    db = get_database()
+    repos_collection = db["repos"]
+
+    repo_doc = await repos_collection.find_one({"_id": repo_object_id})
+    if not repo_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository analysis job not found",
+        )
+
+    status_value = repo_doc.get("status")
+
+    if status_value == "pending":
+        await remove_repo_job_from_queue(str(repo_object_id))
         await repos_collection.update_one(
             {"_id": repo_object_id},
             {
                 "$set": {
-                    "status": "complete",
-                    "completed_at": now,
-                    "error_msg": None,
-                    "node_count": graph_payload["meta"].get("nodeCount", 0),
-                    "edge_count": graph_payload["meta"].get("edgeCount", 0),
+                    "status": "cancelled",
+                    "completed_at": datetime.now(timezone.utc),
+                    "cancel_requested": False,
+                    "error_msg": "Cancelled by user",
+                    "progress": _progress_payload("cancelled", 100),
                 }
             },
         )
-        logger.info("Repository graph analysis complete for %s", github_url)
+        return RepoActionResponse(
+            repo_id=repo_id,
+            status="cancelled",
+            message="Pending job cancelled",
+        )
 
-    except Exception as exc:
-        now = datetime.now(timezone.utc)
+    if status_value in {"analyzing", "cancelling"}:
+        current_progress = repo_doc.get("progress") or {}
+        percent = int(current_progress.get("percent", 0))
         await repos_collection.update_one(
             {"_id": repo_object_id},
             {
                 "$set": {
-                    "status": "failed",
-                    "completed_at": now,
-                    "error_msg": str(exc),
+                    "status": "cancelling",
+                    "cancel_requested": True,
+                    "progress": _progress_payload("cancelling", percent),
                 }
             },
         )
-        logger.exception("Repository graph analysis failed for %s", github_url)
+        return RepoActionResponse(
+            repo_id=repo_id,
+            status="cancelling",
+            message="Cancellation requested",
+        )
+
+    return RepoActionResponse(
+        repo_id=repo_id,
+        status=status_value or "unknown",
+        message="Job is not running; nothing to cancel",
+    )
+
+
+@router.post("/{repo_id}/retry", response_model=RepoActionResponse)
+async def retry_repo_job(repo_id: str) -> RepoActionResponse:
+    repo_object_id = _to_object_id(repo_id)
+    db = get_database()
+    repos_collection = db["repos"]
+    graph_collection = db["graphs"]
+
+    repo_doc = await repos_collection.find_one({"_id": repo_object_id})
+    if not repo_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository analysis job not found",
+        )
+
+    status_value = repo_doc.get("status")
+    if status_value in {"pending", "analyzing", "cancelling"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot retry while job is active (status: {status_value})",
+        )
+
+    await repos_collection.update_one(
+        {"_id": repo_object_id},
+        {
+            "$set": {
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc),
+                "completed_at": None,
+                "error_msg": None,
+                "cancel_requested": False,
+                "node_count": None,
+                "edge_count": None,
+                "progress": _progress_payload("queued", 0),
+            }
+        },
+    )
+
+    await graph_collection.delete_one({"repo_id": repo_object_id})
+    await enqueue_repo_job(str(repo_object_id))
+
+    return RepoActionResponse(
+        repo_id=repo_id,
+        status="pending",
+        message="Retry scheduled",
+    )

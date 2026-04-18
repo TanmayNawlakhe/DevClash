@@ -11,6 +11,7 @@ class Settings:
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     repo_clone_base_dir: str = os.getenv("REPO_CLONE_BASE_DIR", ".repo_cache")
     clone_timeout_seconds: int = int(os.getenv("CLONE_TIMEOUT_SECONDS", "120"))
+    analysis_queue_key: str = os.getenv("ANALYSIS_QUEUE_KEY", "analysis_jobs")
 
 
 settings = Settings()
