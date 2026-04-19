@@ -9,6 +9,7 @@ import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { GittsuriLogo } from '../../components/ui/Logo'
 import { RepoUrlInput } from '../../components/features/repo/RepoUrlInput'
+import { useAuthStore } from '../../store/authStore'
 
 const features = [
   {
@@ -100,6 +101,8 @@ const HERO_TYPEWRITER_WORDS = ['repo', 'monolith', 'frontend', 'backend', 'servi
 
 export function Landing() {
   const navigate = useNavigate()
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
+  const hasHydrated = useAuthStore((state) => state.hasHydrated)
   const heroRef = useRef<HTMLDivElement>(null)
   const howSectionRef = useRef<HTMLElement>(null)
   const [typedWord, setTypedWord] = useState('')
@@ -128,6 +131,7 @@ export function Landing() {
   const navBgOpacity = useTransform(navProgress, [0, 1], [0, 0.98])
   const navBorder = useMotionTemplate`1px solid rgba(196, 205, 236, ${navBorderOpacity})`
   const navBackground = useMotionTemplate`rgba(249, 251, 255, ${navBgOpacity})`
+  const isSignedIn = hasHydrated && isAuthenticated
 
   useEffect(() => {
     const currentWord = HERO_TYPEWRITER_WORDS[activeWordIndex]
@@ -215,18 +219,41 @@ export function Landing() {
               ))}
             </nav>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
-                <Link to="/signin">Sign In</Link>
-              </Button>
-              <Button size="sm" asChild className="group relative overflow-hidden">
-                <Link to="/signup">
-                  <span className="relative z-10 flex items-center gap-1.5">
-                    Get Started
-                    <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-                  </span>
-                  <span className="absolute inset-0 -translate-x-full bg-white/20 transition-transform duration-500 group-hover:translate-x-full" />
-                </Link>
-              </Button>
+              {!hasHydrated ? (
+                <div className="flex size-8 items-center justify-center text-muted-foreground">
+                  <div className="size-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                </div>
+              ) : isSignedIn ? (
+                <>
+                  <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
+                    <Link to="/analysis">New Analysis</Link>
+                  </Button>
+                  <Button size="sm" asChild className="group relative overflow-hidden">
+                    <Link to="/dashboard">
+                      <span className="relative z-10 flex items-center gap-1.5">
+                        Dashboard
+                        <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+                      </span>
+                      <span className="absolute inset-0 -translate-x-full bg-white/20 transition-transform duration-500 group-hover:translate-x-full" />
+                    </Link>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
+                    <Link to="/signin">Sign In</Link>
+                  </Button>
+                  <Button size="sm" asChild className="group relative overflow-hidden">
+                    <Link to="/signup">
+                      <span className="relative z-10 flex items-center gap-1.5">
+                        Get Started
+                        <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+                      </span>
+                      <span className="absolute inset-0 -translate-x-full bg-white/20 transition-transform duration-500 group-hover:translate-x-full" />
+                    </Link>
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </motion.div>
@@ -289,11 +316,15 @@ export function Landing() {
               <motion.div variants={fadeUp} className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Button
                   size="lg"
-                  onClick={() => navigate('/signup')}
+                  onClick={() => {
+                    if (!hasHydrated) return
+                    navigate(isSignedIn ? '/analysis' : '/signup')
+                  }}
+                  disabled={!hasHydrated}
                   className="group relative overflow-hidden px-7 shadow-xl shadow-primary/20"
                 >
                   <span className="relative z-10 flex items-center gap-2">
-                    Analyze a Repo
+                    {!hasHydrated ? 'Checking session...' : isSignedIn ? 'Open Workspace' : 'Analyze a Repo'}
                     <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
                   </span>
                   <span className="absolute inset-0 -translate-x-full bg-white/15 transition-transform duration-500 group-hover:translate-x-full" />

@@ -1,8 +1,8 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bell, ChevronRight, Menu, Search } from 'lucide-react'
 import { GittsuriLogo } from '../ui/Logo'
-import { useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { FormEvent, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Avatar } from '../ui/Avatar'
 import { Button } from '../ui/Button'
 import * as DropdownMenu from '../ui/DropdownMenu'
@@ -25,6 +25,14 @@ export function Topbar() {
   const crumbs = breadcrumb(location.pathname)
   const isAnalysis = location.pathname.startsWith('/analysis')
 
+  function handleRepoSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const query = searchOpen ? event.currentTarget.search.value.trim() : ''
+    const target = query ? `/repos?search=${encodeURIComponent(query)}` : '/repos'
+    navigate(target)
+    setSearchOpen(false)
+  }
+
   async function handleSignOut() {
     try {
       await logoutUser()
@@ -37,7 +45,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/90 px-4 sm:px-5 lg:px-8 backdrop-blur-xl">
       {/* Mobile menu */}
       <Button
         className="lg:hidden"
@@ -50,12 +58,12 @@ export function Topbar() {
       </Button>
 
       {/* Logo (mobile) */}
-      <div className="flex items-center gap-2 lg:hidden">
+      <Link to="/" className="flex items-center gap-2 lg:hidden" aria-label="Go to landing page">
         <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <GittsuriLogo className="size-3.5" />
         </span>
         <span className="brand-gradient-text font-heading text-base font-bold">Gittsurī</span>
-      </div>
+      </Link>
 
       {/* Breadcrumb */}
       <div className="hidden min-w-0 flex-1 lg:block">
@@ -102,12 +110,15 @@ export function Topbar() {
               transition={{ duration: 0.2 }}
               className="overflow-hidden"
             >
-              <input
-                autoFocus
-                placeholder="Search repos..."
-                onBlur={() => setSearchOpen(false)}
-                className="h-9 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-              />
+              <form onSubmit={handleRepoSearch}>
+                <input
+                  autoFocus
+                  name="search"
+                  placeholder="Search repos..."
+                  onBlur={() => setSearchOpen(false)}
+                  className="h-9 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                />
+              </form>
             </motion.div>
           )}
         </AnimatePresence>

@@ -1,16 +1,43 @@
-# React + Vite
+# NeuroGraph — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + TypeScript SPA for the NeuroGraph repository visualization platform.
 
-Currently, two official plugins are available:
+See the [root README](../README.md) for full project documentation, setup instructions, and architecture overview.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Development
 
-## React Compiler
+```bash
+npm install
+npm run dev      # http://localhost:5173
+npm run build    # production build
+npm run lint     # ESLint
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Key Directories
 
-## Expanding the ESLint configuration
+```
+src/
+├── pages/          # Route-level components (Dashboard, RepoAnalysis, RepoHistory, Auth)
+├── components/
+│   ├── features/   # Graph canvas, panels, ownership, repo cards, analysis progress
+│   └── ui/         # Primitive components (Badge, Tooltip, etc.)
+├── store/          # Zustand stores: graphStore, repoStore, ownershipStore, priorityStore
+├── services/       # API calls: graphService, repoService
+├── lib/
+│   ├── repoAdapters.ts   # Backend → frontend type mapping and graph enrichment
+│   ├── graphUtils.ts     # Graph layout algorithms (force, hierarchical, collapsed pipeline)
+│   └── constants.ts      # LAYER_COLORS, STATUS_LABELS, ANALYSIS_STAGES
+└── types/index.ts  # All shared TypeScript types
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Graph Views
+
+The canvas (`GraphCanvas.tsx`) supports three view modes and two layout modes:
+
+- **View modes:** `dependency` · `ownership` · `priority`
+- **Layout modes:** `hierarchical` · `force` · `radial`
+- **Collapsed pipeline** — files grouped by AI classification into a horizontal dependency flow; click a chip to expand it
+
+## Backend Connection
+
+Set `VITE_API_BASE_URL` (optional) to point at a non-default backend. The `api.ts` service reads this at runtime. Without it the app runs against `http://localhost:8000`.

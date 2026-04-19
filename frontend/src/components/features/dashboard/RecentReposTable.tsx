@@ -17,7 +17,7 @@ export function RecentReposTable({ repos }: { repos: Repo[] }) {
         {
           header: 'Repo',
           cell: (repo) => (
-            <span className="font-mono font-medium">
+            <span className="block max-w-[260px] truncate font-mono font-medium">
               {repo.owner}/{repo.name}
             </span>
           ),

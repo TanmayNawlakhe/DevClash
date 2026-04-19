@@ -112,6 +112,12 @@ export function SignUp() {
             </span>
             <span className="brand-gradient-text font-heading text-xl font-bold">Gittsurī</span>
           </Link>
+          <Link
+            to="/"
+            className="mb-5 inline-flex items-center rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            Back to Landing Page
+          </Link>
           <RegisterForm />
         </div>
       </div>

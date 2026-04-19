@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, FileCode2, Loader2, PanelLeftClose, PanelLeftOpen, RotateCcw } from 'lucide-react'
@@ -39,6 +39,8 @@ export function RepoAnalysis() {
   const setSelectedNode = useGraphStore((state) => state.setSelectedNode)
   const setActivePanel = useUIStore((state) => state.setActivePanel)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const hasSeenInProgressRef = useRef(false)
+  const completionToastKeyRef = useRef<string | null>(null)
   const queryClient = useQueryClient()
 
   const fallbackRepo = useMemo(
@@ -60,6 +62,11 @@ export function RepoAnalysis() {
   })
 
   const repo = statusQuery.data ?? fallbackRepo
+
+  useEffect(() => {
+    hasSeenInProgressRef.current = false
+    completionToastKeyRef.current = null
+  }, [repoId])
 
   const graphQuery = useQuery({
     queryKey: ['repo-graph', repoId],
@@ -115,6 +122,9 @@ export function RepoAnalysis() {
     if (!repo) return
     upsertRepo(repo)
     setRepo(repo)
+    if (['pending', 'analyzing', 'cloning', 'parsing', 'ai_processing', 'cancelling'].includes(repo.status)) {
+      hasSeenInProgressRef.current = true
+    }
     const progress = describeRepoProgress(repo)
     setAnalysisStatus(progress.status, progress.progress, progress.stage, progress.log)
   }, [repo, setAnalysisStatus, setRepo, upsertRepo])
@@ -152,6 +162,31 @@ export function RepoAnalysis() {
     setRepo,
     summariesQuery.data,
     upsertRepo,
+  ])
+
+  useEffect(() => {
+    if (!repoId || !repo || repo.status !== 'complete') return
+    if (!enrichedGraph || !graphQuery.isSuccess || !summariesQuery.isSuccess) return
+    if (!hasSeenInProgressRef.current) return
+
+    const aiSummaries = summariesQuery.data?.summarized_files ?? 0
+    const completionKey = `${repoId}:${enrichedGraph.meta.nodeCount}:${aiSummaries}`
+    if (completionToastKeyRef.current === completionKey) return
+
+    completionToastKeyRef.current = completionKey
+    toast.success(
+      aiSummaries > 0
+        ? `Graph built successfully. AI analysis complete for ${aiSummaries} files.`
+        : 'Graph built successfully. AI analysis complete.',
+      { id: `analysis-complete-${repoId}` },
+    )
+  }, [
+    enrichedGraph,
+    graphQuery.isSuccess,
+    repo,
+    repoId,
+    summariesQuery.data,
+    summariesQuery.isSuccess,
   ])
 
   if (!repoId) {

@@ -25,10 +25,10 @@ export function AppShell() {
   }, [reposQuery.data, setRepos])
 
   return (
-    <div className="app-surface flex min-h-dvh text-foreground">
+    <div className="app-surface flex h-dvh overflow-hidden text-foreground">
       <Sidebar />
       <MobileNav />
-      <div className="min-w-0 flex-1 overflow-x-hidden">
+      <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
         <Topbar />
         <AnimatePresence mode="wait">
           <motion.main

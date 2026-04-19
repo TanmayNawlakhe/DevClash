@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ChevronLeft, ChevronRight, FolderGit2, LayoutDashboard,
-  LogOut, Plus, Settings, Sparkles
+  LogOut, Plus, Sparkles
 } from 'lucide-react'
 import { GittsuriLogo } from '../ui/Logo'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
@@ -15,7 +15,6 @@ const navItems = [
   { key: 'dashboard', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'analysis', to: '/analysis', label: 'New Analysis', icon: Plus },
   { key: 'repos', to: '/repos', label: 'My Repos', icon: FolderGit2 },
-  { key: 'settings', to: '/dashboard?settings=true', label: 'Settings', icon: Settings },
 ]
 
 type NavItemKey = (typeof navItems)[number]['key']
@@ -28,12 +27,8 @@ export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const searchParams = new URLSearchParams(location.search)
-  const isSettingsRoute = location.pathname === '/dashboard' && searchParams.get('settings') === 'true'
-
   function isNavItemActive(key: NavItemKey) {
-    if (key === 'dashboard') return location.pathname === '/dashboard' && !isSettingsRoute
-    if (key === 'settings') return isSettingsRoute
+    if (key === 'dashboard') return location.pathname === '/dashboard'
     if (key === 'analysis') return location.pathname.startsWith('/analysis')
     if (key === 'repos') return location.pathname.startsWith('/repos')
     return false
@@ -55,7 +50,7 @@ export function Sidebar() {
       initial={{ x: -240 }}
       animate={{ x: 0, width: sidebarOpen ? 240 : 68 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className="relative hidden h-dvh shrink-0 flex-col overflow-x-visible overflow-y-hidden border-r border-sidebar-border bg-sidebar lg:flex"
+      className="relative hidden h-dvh shrink-0 flex-col overflow-x-hidden overflow-y-hidden border-r border-sidebar-border bg-sidebar lg:flex"
       style={{
         background: 'linear-gradient(180deg, var(--sidebar) 0%, color-mix(in oklch, var(--sidebar) 95%, var(--accent)) 100%)',
       }}
@@ -71,31 +66,34 @@ export function Sidebar() {
 
       {/* Logo row */}
       <div className="relative flex h-16 items-center gap-3 px-4">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/30">
-          <GittsuriLogo className="size-5" />
-        </div>
-        <AnimatePresence>
-          {sidebarOpen && (
-            <motion.span
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: 'auto' }}
-              exit={{ opacity: 0, width: 0 }}
-              className="brand-gradient-text overflow-hidden whitespace-nowrap font-heading text-xl font-bold"
-            >
-              Gittsurī
-            </motion.span>
-          )}
-        </AnimatePresence>
+        <Link
+          to="/"
+          aria-label="Go to landing page"
+          className={cn('flex min-w-0 items-center gap-3', !sidebarOpen && 'w-full justify-center')}
+        >
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/30">
+            <GittsuriLogo className="size-5" />
+          </div>
+          <AnimatePresence>
+            {sidebarOpen && (
+              <motion.span
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: 'auto' }}
+                exit={{ opacity: 0, width: 0 }}
+                className="brand-gradient-text overflow-hidden whitespace-nowrap font-heading text-xl font-bold"
+              >
+                Gittsurī
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </Link>
 
         {/* Collapse toggle */}
         <button
           type="button"
           onClick={toggleSidebar}
           aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          className={cn(
-            'absolute top-5 z-20 flex size-7 items-center justify-center rounded-full border border-border bg-card shadow-sm text-muted-foreground transition-colors hover:text-foreground',
-            sidebarOpen ? 'right-2' : 'left-1/2 -translate-x-1/2',
-          )}
+          className="absolute right-[-10px] top-[4.56 rem] z-20 flex size-7 items-center justify-center rounded-full border border-border bg-card shadow-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           {sidebarOpen ? <ChevronLeft className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         </button>

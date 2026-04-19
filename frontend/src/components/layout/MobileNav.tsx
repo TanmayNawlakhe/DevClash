@@ -1,4 +1,4 @@
-import { FolderGit2, LayoutDashboard, Plus, Settings } from 'lucide-react'
+import { FolderGit2, LayoutDashboard, Plus } from 'lucide-react'
 import { GittsuriLogo } from '../ui/Logo'
 import { Link, useLocation } from 'react-router-dom'
 import { Drawer } from '../ui/Drawer'
@@ -9,7 +9,6 @@ const items = [
   { key: 'dashboard', to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'analysis', to: '/analysis', label: 'New Analysis', icon: Plus },
   { key: 'repos', to: '/repos', label: 'My Repos', icon: FolderGit2 },
-  { key: 'settings', to: '/dashboard?settings=true', label: 'Settings', icon: Settings },
 ]
 
 type NavItemKey = (typeof items)[number]['key']
@@ -19,12 +18,8 @@ export function MobileNav() {
   const setOpen = useUIStore((state) => state.setMobileNavOpen)
   const location = useLocation()
 
-  const searchParams = new URLSearchParams(location.search)
-  const isSettingsRoute = location.pathname === '/dashboard' && searchParams.get('settings') === 'true'
-
   function isItemActive(key: NavItemKey) {
-    if (key === 'dashboard') return location.pathname === '/dashboard' && !isSettingsRoute
-    if (key === 'settings') return isSettingsRoute
+    if (key === 'dashboard') return location.pathname === '/dashboard'
     if (key === 'analysis') return location.pathname.startsWith('/analysis')
     if (key === 'repos') return location.pathname.startsWith('/repos')
     return false
@@ -32,12 +27,12 @@ export function MobileNav() {
 
   return (
     <Drawer open={open} onOpenChange={setOpen} title="Gittsurī" side="left">
-      <div className="mb-6 flex items-center gap-3">
+      <Link to="/" onClick={() => setOpen(false)} className="mb-6 flex items-center gap-3" aria-label="Go to landing page">
         <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <GittsuriLogo className="size-4" />
         </div>
         <span className="brand-gradient-text font-serif text-xl font-bold">Gittsurī</span>
-      </div>
+      </Link>
       <nav className="space-y-1">
         {items.map((item) => (
           <Link

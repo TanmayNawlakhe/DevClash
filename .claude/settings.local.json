@@ -14,7 +14,8 @@
       "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
       "Read(//mnt/**)",
       "Read(//d//**)",
-      "Bash(cmd.exe /c \"cd D:\\\\DevClash\\\\frontend && npx tsc --noEmit\")"
+      "Bash(cmd.exe /c \"cd D:\\\\DevClash\\\\frontend && npx tsc --noEmit\")",
+      "Bash(awk '{print $NF}')"
     ]
   }
 }

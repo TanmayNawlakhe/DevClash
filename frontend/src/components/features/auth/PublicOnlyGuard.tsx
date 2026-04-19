@@ -1,10 +1,9 @@
-import { Navigate, useLocation } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { useAuthStore } from '../../../store/authStore'
 
-export function AuthGuard({ children }: { children: React.ReactNode }) {
+export function PublicOnlyGuard({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
   const hasHydrated = useAuthStore((state) => state.hasHydrated)
-  const location = useLocation()
 
   if (!hasHydrated) {
     return (
@@ -14,8 +13,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (!isAuthenticated) {
-    return <Navigate to={`/signin?redirect=${encodeURIComponent(`${location.pathname}${location.search}`)}`} replace />
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />
   }
 
   return <>{children}</>

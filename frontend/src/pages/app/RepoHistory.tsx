@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FolderGit2, Search, SlidersHorizontal } from 'lucide-react'
 import { RepoCard } from '../../components/features/repo/RepoCard'
 import { EmptyState } from '../../components/ui/EmptyState'
@@ -12,11 +12,17 @@ const STATUS_FILTERS = ['all', 'pending', 'analyzing', 'cancelling', 'cancelled'
 
 export function RepoHistory() {
   const repos = useRepoStore((state) => state.repos)
-  const [search, setSearch] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialSearch = searchParams.get('search') ?? ''
+  const [search, setSearch] = useState(initialSearch)
   const [status, setStatus] = useState('all')
   const [sort, setSort] = useState('recent')
   const debounced = useDebounce(search)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    setSearch(initialSearch)
+  }, [initialSearch])
 
   const filtered = useMemo(() => {
     return repos
@@ -29,8 +35,19 @@ export function RepoHistory() {
       })
   }, [debounced, repos, sort, status])
 
+  function handleSearchChange(value: string) {
+    setSearch(value)
+    const next = new URLSearchParams(searchParams)
+    if (value.trim()) {
+      next.set('search', value.trim())
+    } else {
+      next.delete('search')
+    }
+    setSearchParams(next, { replace: true })
+  }
+
   return (
-    <div className="space-y-6 p-5 lg:p-8">
+    <div className="mx-auto w-full max-w-[1480px] space-y-6 px-4 py-5 sm:px-5 lg:px-8">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -56,21 +73,21 @@ export function RepoHistory() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.05 }}
-        className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm md:flex-row md:items-center"
+        className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between"
       >
         {/* Search */}
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             placeholder="Search repositories…"
             className="h-10 w-full rounded-xl border border-input bg-background pl-10 pr-4 text-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/15"
           />
         </div>
 
         {/* Status filters */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-start gap-2 md:items-center">
           <SlidersHorizontal className="size-4 shrink-0 text-muted-foreground" />
           <div className="flex flex-wrap gap-1.5">
             {STATUS_FILTERS.map((item) => (

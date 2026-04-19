@@ -102,6 +102,12 @@ export function SignIn() {
             </span>
             <span className="brand-gradient-text font-heading text-xl font-bold">Gittsuri</span>
           </Link>
+          <Link
+            to="/"
+            className="mb-5 inline-flex items-center rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            Back to Landing Page
+          </Link>
           <LoginForm />
         </div>
       </div>

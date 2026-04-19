@@ -1,8 +1,9 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Outlet } from 'react-router-dom'
 import { lazy, Suspense } from 'react'
 
 const AppShell = lazy(() => import('../components/layout/AppShell').then((module) => ({ default: module.AppShell })))
 const AuthGuard = lazy(() => import('../components/features/auth/AuthGuard').then((module) => ({ default: module.AuthGuard })))
+const PublicOnlyGuard = lazy(() => import('../components/features/auth/PublicOnlyGuard').then((module) => ({ default: module.PublicOnlyGuard })))
 const Landing = lazy(() => import('../pages/public/Landing').then((module) => ({ default: module.Landing })))
 const SignIn = lazy(() => import('../pages/public/SignIn').then((module) => ({ default: module.SignIn })))
 const SignUp = lazy(() => import('../pages/public/SignUp').then((module) => ({ default: module.SignUp })))
@@ -28,12 +29,29 @@ function WithSuspense({ children }: { children: React.ReactNode }) {
   )
 }
 
+function PublicOnlyOutlet() {
+  return (
+    <PublicOnlyGuard>
+      <Outlet />
+    </PublicOnlyGuard>
+  )
+}
+
 export const router = createBrowserRouter([
   { path: '/', element: <WithSuspense><Landing /></WithSuspense> },
-  { path: '/signin', element: <WithSuspense><SignIn /></WithSuspense> },
-  { path: '/signup', element: <WithSuspense><SignUp /></WithSuspense> },
-  { path: '/forgot-password', element: <WithSuspense><ForgotPassword /></WithSuspense> },
-  { path: '/reset-password', element: <WithSuspense><ResetPassword /></WithSuspense> },
+  {
+    element: (
+      <WithSuspense>
+        <PublicOnlyOutlet />
+      </WithSuspense>
+    ),
+    children: [
+      { path: '/signin', element: <WithSuspense><SignIn /></WithSuspense> },
+      { path: '/signup', element: <WithSuspense><SignUp /></WithSuspense> },
+      { path: '/forgot-password', element: <WithSuspense><ForgotPassword /></WithSuspense> },
+      { path: '/reset-password', element: <WithSuspense><ResetPassword /></WithSuspense> },
+    ],
+  },
   { path: '/unauthorized', element: <WithSuspense><Unauthorized /></WithSuspense> },
   {
     element: (
