@@ -4,6 +4,21 @@ import { adaptRepoFileDetail, adaptRepoGraph, searchGraphSummaries } from '../li
 import { sleep } from '../lib/utils'
 import type { FileDetail, GraphData, QueryResult } from '../types'
 
+export interface RepoKeywordReference {
+  keyword: string
+  normalReferenceUrl: string | null
+  youtubeReferenceUrl: string | null
+  youtubeSearchUrl: string
+  cacheHit: boolean
+}
+
+export interface RepoFileReferencesResult {
+  repoId: string
+  filePath: string
+  keywordCount: number
+  references: RepoKeywordReference[]
+}
+
 export async function fetchGraph(repoId: string): Promise<GraphData> {
   if (hasRepoApi()) {
     const { data } = await api.get<any>(`/api/repos/${repoId}/graph`)
@@ -29,6 +44,47 @@ export async function fetchFileDetail(repoId: string, fileId: string, graph: Gra
     code: demoCode[file.id] ?? sampleCode(file.path),
     imports: demoFiles.filter((item) => outgoingIds.includes(item.id)),
     dependents: demoFiles.filter((item) => incomingIds.includes(item.id)),
+  }
+}
+
+export async function fetchFileReferences(repoId: string, filePath: string): Promise<RepoFileReferencesResult> {
+  if (hasRepoApi()) {
+    const { data } = await api.get<any>(`/api/repos/${repoId}/file-references`, {
+      params: { file_path: filePath },
+    })
+
+    return {
+      repoId: String(data.repo_id ?? repoId),
+      filePath: String(data.file_path ?? filePath),
+      keywordCount: Number(data.keyword_count ?? 0),
+      references: Array.isArray(data.references)
+        ? data.references.map((entry: any) => ({
+            keyword: String(entry.keyword ?? ''),
+            normalReferenceUrl: entry.normal_reference_url ? String(entry.normal_reference_url) : null,
+            youtubeReferenceUrl: entry.youtube_reference_url ? String(entry.youtube_reference_url) : null,
+            youtubeSearchUrl: String(entry.youtube_search_url ?? ''),
+            cacheHit: Boolean(entry.cache_hit),
+          }))
+        : [],
+    }
+  }
+
+  await sleep(150)
+  const keyword = filePath.split('/').at(-1)?.replace(/\.[^.]+$/, '') || 'repository'
+
+  return {
+    repoId,
+    filePath,
+    keywordCount: 1,
+    references: [
+      {
+        keyword,
+        normalReferenceUrl: null,
+        youtubeReferenceUrl: null,
+        youtubeSearchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${keyword} youtube tutorial`)}`,
+        cacheHit: false,
+      },
+    ],
   }
 }
 
