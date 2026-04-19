@@ -1,24 +1,28 @@
 import mermaid from 'mermaid'
 
-let initialized = false
+let initializedTheme: 'dark' | 'base' | null = null
+let renderNonce = 0
 
 export function initMermaid(darkMode: boolean) {
+  const theme = darkMode ? 'dark' : 'base'
+  if (initializedTheme === theme) return
+
+  const fontFamily = typeof window === 'undefined'
+    ? 'ui-sans-serif, system-ui, sans-serif'
+    : getComputedStyle(document.documentElement).getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui, sans-serif'
+
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'loose',
-    theme: darkMode ? 'dark' : 'base',
+    theme,
     themeVariables: {
-      primaryColor: 'var(--accent)',
-      primaryTextColor: 'var(--foreground)',
-      primaryBorderColor: 'var(--primary)',
-      lineColor: 'var(--border)',
-      fontFamily: 'var(--font-sans)',
+      fontFamily,
     },
   })
-  initialized = true
+  initializedTheme = theme
 }
 
 export async function renderMermaid(id: string, source: string, darkMode: boolean) {
-  if (!initialized) initMermaid(darkMode)
-  return mermaid.render(id, source)
+  initMermaid(darkMode)
+  return mermaid.render(`${id}-${renderNonce++}`, source)
 }

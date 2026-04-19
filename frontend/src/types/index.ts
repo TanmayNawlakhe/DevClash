@@ -128,6 +128,24 @@ export interface FlowDiagramResult {
   plainEnglish: string
 }
 
+export interface QueryFlowMatch {
+  name: string
+  score: number
+}
+
+export interface QueryFlowEntry {
+  rank: number
+  fileId: string
+  path: string
+  score: number
+  scoreBreakdown: Record<string, number>
+  layer: Layer
+  language: string
+  isEntry: boolean
+  summary: string
+  matchedFunctions: QueryFlowMatch[]
+}
+
 export interface QueryResult {
   fileIds: string[]
   results: Array<{
@@ -136,6 +154,20 @@ export interface QueryResult {
     score: number
     snippet: string
   }>
+  answer?: string
+  mermaid?: string
+  flow?: QueryFlowEntry[]
+  totalMatched?: number
+}
+
+export interface EmbeddingStatus {
+  repoId: string
+  status: 'processing' | 'complete' | 'failed' | 'not_started' | 'unknown'
+  startedAt?: string | null
+  completedAt?: string | null
+  errorMessage?: string | null
+  fileCount: number
+  message: string
 }
 
 export interface FileDetail extends FileNode {
@@ -145,4 +177,4 @@ export interface FileDetail extends FileNode {
 }
 
 export type ArchitectureNode = Node<FileNode & Record<string, unknown>>
-export type ArchitectureEdge = Edge<{ importType: GraphEdge['importType']; symbol?: string }>
+export type ArchitectureEdge = Edge<{ importType: GraphEdge['importType']; symbol?: string; isGroupEdge?: boolean }>

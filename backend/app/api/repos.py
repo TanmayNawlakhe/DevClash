@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from typing import Any
+from urllib.parse import quote_plus
 
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
@@ -14,15 +15,18 @@ from app.schemas.repo import (
     RepoActionResponse,
     RepoCreateRequest,
     RepoFileDetailResponse,
+    RepoFileKeywordReferencesResponse,
     RepoFileSummary,
     RepoFunctionInfo,
     RepoFunctionSummary,
     RepoGraphResponse,
+    RepoKeywordReference,
     RepoListResponse,
     RepoStatusResponse,
     RepoSubmitResponse,
     RepoSummariesResponse,
 )
+from app.services.keyword_references import get_or_fetch_keyword_reference_urls
 from app.services.repo_analyzer import is_supported_github_url, normalize_github_url
 from app.services.repo_job_processor import enqueue_repo_job, remove_repo_job_from_queue
 from app.services.embedding_service import run_embedding_job
@@ -50,6 +54,10 @@ ALLOWED_CLASSIFICATIONS = {
 def _normalize_classification(raw_value: Any) -> str:
     value = str(raw_value or "").strip().lower().replace("-", "_").replace(" ", "_")
     return value if value in ALLOWED_CLASSIFICATIONS else "utility"
+
+
+def _youtube_search_url(keyword: str) -> str:
+    return f"https://www.youtube.com/results?search_query={quote_plus(keyword + ' youtube tutorial')}"
 
 
 async def ensure_repo_indexes() -> None:
@@ -111,6 +119,28 @@ def _read_source_preview(clone_path: Path, file_path: str) -> str | None:
         )
     except Exception:
         return None
+
+
+def _count_lines_from_clone(clone_path: Path, file_path: str) -> int | None:
+    try:
+        base = clone_path.resolve()
+        candidate = (base / Path(file_path)).resolve()
+        candidate.relative_to(base)
+        if not candidate.is_file():
+            return None
+
+        content = candidate.read_text(encoding="utf-8", errors="ignore")
+        normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+        return max(1, len(normalized.split("\n")))
+    except Exception:
+        return None
+
+
+def _node_line_count(node: dict[str, Any]) -> int:
+    try:
+        return int(node.get("data", {}).get("lineCount") or 0)
+    except Exception:
+        return 0
 
 
 def _ensure_preview_clone(repo_id: str, github_url: str) -> Path | None:
@@ -303,6 +333,29 @@ async def get_repo_graph(
 
     nodes = graph_doc.get("nodes", [])
     edges = graph_doc.get("edges", [])
+
+    clone_path_raw = graph_doc.get("clone_path")
+    if clone_path_raw and any(_node_line_count(node) <= 0 for node in nodes):
+        clone_path = Path(str(clone_path_raw))
+        did_update = False
+        for node in nodes:
+            if _node_line_count(node) > 0:
+                continue
+
+            file_id = str(node.get("id", ""))
+            line_count = _count_lines_from_clone(clone_path, file_id)
+            if line_count is None:
+                continue
+
+            node.setdefault("data", {})["lineCount"] = line_count
+            did_update = True
+
+        if did_update:
+            await db["graphs"].update_one(
+                {"repo_id": repo_object_id},
+                {"$set": {"nodes": nodes}},
+            )
+
     filtered_nodes, filtered_edges = _filter_graph_payload(
         nodes=nodes,
         edges=edges,
@@ -401,6 +454,94 @@ async def get_repo_summaries(repo_id: str) -> RepoSummariesResponse:
         total_files=total_files,
         summarized_files=len(summary_list),
         summaries=summary_list,
+    )
+
+
+@router.get("/{repo_id}/file-references", response_model=RepoFileKeywordReferencesResponse)
+async def get_repo_file_references(
+    repo_id: str,
+    file_path: str = Query(..., description="Repository-relative file path"),
+) -> RepoFileKeywordReferencesResponse:
+    repo_object_id = _to_object_id(repo_id)
+    db = get_database()
+
+    repo_doc = await db["repos"].find_one({"_id": repo_object_id})
+    if not repo_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository analysis job not found",
+        )
+
+    if repo_doc.get("status") != "complete":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Repository graph is not ready yet (status: {repo_doc.get('status')})",
+        )
+
+    graph_doc = await db["graphs"].find_one({"repo_id": repo_object_id})
+    if not graph_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Graph document was not found for this repository",
+        )
+
+    nodes: list[dict[str, Any]] = graph_doc.get("nodes", [])
+    node_map = {str(node.get("id")): node for node in nodes}
+    selected_node = node_map.get(file_path)
+    if not selected_node:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File path not found in graph",
+        )
+
+    data = selected_node.get("data", {})
+    raw_keywords = data.get("keywords", [])
+    ordered_keywords: list[str] = []
+    seen: set[str] = set()
+    for kw in raw_keywords if isinstance(raw_keywords, list) else []:
+        cleaned = str(kw).strip()
+        dedupe_key = cleaned.lower()
+        if not cleaned or dedupe_key in seen:
+            continue
+        ordered_keywords.append(cleaned)
+        seen.add(dedupe_key)
+
+    references: list[RepoKeywordReference] = []
+    for keyword in ordered_keywords:
+        try:
+            payload = await get_or_fetch_keyword_reference_urls(keyword)
+        except RuntimeError as exc:
+            logger.warning(
+                "[file-references] Tavily unavailable for keyword '%s' in repo %s: %s",
+                keyword,
+                repo_id,
+                exc,
+            )
+            references.append(
+                RepoKeywordReference(
+                    keyword=keyword,
+                    normal_reference_url=None,
+                    youtube_reference_url=None,
+                    youtube_search_url=_youtube_search_url(keyword),
+                    cache_hit=False,
+                )
+            )
+            continue
+        references.append(
+            RepoKeywordReference(
+                keyword=keyword,
+                normal_reference_url=payload.get("normal_reference_url"),
+                youtube_reference_url=payload.get("youtube_reference_url"),
+                youtube_search_url=str(payload.get("youtube_search_url", "")),
+                cache_hit=bool(payload.get("cache_hit", False)),
+            )
+        )
+
+    return RepoFileKeywordReferencesResponse(
+        repo_id=repo_id,
+        file_path=file_path,
+        keyword_count=len(ordered_keywords),
+        references=references,
     )
 
 

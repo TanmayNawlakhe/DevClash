@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(venv\\\\Scripts\\\\pip show *)",
+      "Bash(venv/Scripts/pip show *)",
+      "Bash(venv/Scripts/python -c \"import transformers; print\\(dir\\(transformers\\)\\)\")",
+      "Bash(venv/Scripts/python -c \"import transformers; autos = [x for x in dir\\(transformers\\) if 'Auto' in x or 'Roberta' in x]; print\\(autos\\)\")",
+      "Bash(venv/Scripts/python -c \"from transformers import AutoModel, AutoTokenizer; print\\('OK'\\)\")",
+      "Bash(venv/Scripts/python -c ' *)"
     ]
   }
 }

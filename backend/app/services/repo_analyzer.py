@@ -201,13 +201,20 @@ async def analyze_repository_graph(
 
         # Second pass: extract function/class names while the repo is still on disk.
         functions_by_file: dict[str, list[dict]] = {}
+        line_counts_by_file: dict[str, int] = {}
         for rel_path in files:
             abs_path = repo_clone_path / Path(rel_path)
             functions_by_file[rel_path] = _extract_functions_from_file(abs_path, rel_path)
+            line_counts_by_file[rel_path] = _count_lines_from_file(abs_path)
 
         await _emit_progress(progress_callback, "building_graph", 95)
 
-        graph_payload = _build_graph_payload(files, edges, functions_by_file)
+        graph_payload = _build_graph_payload(
+            files,
+            edges,
+            functions_by_file,
+            line_counts_by_file,
+        )
         await _emit_progress(progress_callback, "complete", 100)
         # Return the clone path so the caller can read file content for AI
         # summarisation before cleaning up the directory.
@@ -837,11 +844,22 @@ def _extract_functions_from_file(file_path, rel_path: str) -> list[dict]:
     return _ts_extract(file_path, rel_path)
 
 
+def _count_lines_from_file(file_path: Path) -> int:
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return 0
+
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    return max(1, len(normalized.split("\n")))
+
+
 
 def _build_graph_payload(
     files: list[str],
     edges: set[tuple[str, str]],
     functions_by_file: dict[str, list[dict]] | None = None,
+    line_counts_by_file: dict[str, int] | None = None,
 ) -> dict:
     in_degree = {path: 0 for path in files}
     out_degree = {path: 0 for path in files}
@@ -854,6 +872,7 @@ def _build_graph_payload(
 
     for index, path in enumerate(files):
         funcs = (functions_by_file or {}).get(path, [])
+        line_count = (line_counts_by_file or {}).get(path, 0)
         node = {
             "id": path,
             "position": {
@@ -868,6 +887,7 @@ def _build_graph_payload(
                 "isOrphan": in_degree[path] == 0 and out_degree[path] == 0,
                 "inDegree": in_degree[path],
                 "outDegree": out_degree[path],
+                "lineCount": line_count,
                 "functions": funcs,
                 "functionCount": len(funcs),
             },

@@ -4,6 +4,21 @@ import { adaptRepoFileDetail, adaptRepoGraph, searchGraphSummaries } from '../li
 import { sleep } from '../lib/utils'
 import type { FileDetail, GraphData, QueryResult } from '../types'
 
+export interface RepoKeywordReference {
+  keyword: string
+  normalReferenceUrl: string | null
+  youtubeReferenceUrl: string | null
+  youtubeSearchUrl: string
+  cacheHit: boolean
+}
+
+export interface RepoFileReferencesResult {
+  repoId: string
+  filePath: string
+  keywordCount: number
+  references: RepoKeywordReference[]
+}
+
 export async function fetchGraph(repoId: string): Promise<GraphData> {
   if (hasRepoApi()) {
     const { data } = await api.get<any>(`/api/repos/${repoId}/graph`)
@@ -29,6 +44,47 @@ export async function fetchFileDetail(repoId: string, fileId: string, graph: Gra
     code: demoCode[file.id] ?? sampleCode(file.path),
     imports: demoFiles.filter((item) => outgoingIds.includes(item.id)),
     dependents: demoFiles.filter((item) => incomingIds.includes(item.id)),
+  }
+}
+
+export async function fetchFileReferences(repoId: string, filePath: string): Promise<RepoFileReferencesResult> {
+  if (hasRepoApi()) {
+    const { data } = await api.get<any>(`/api/repos/${repoId}/file-references`, {
+      params: { file_path: filePath },
+    })
+
+    return {
+      repoId: String(data.repo_id ?? repoId),
+      filePath: String(data.file_path ?? filePath),
+      keywordCount: Number(data.keyword_count ?? 0),
+      references: Array.isArray(data.references)
+        ? data.references.map((entry: any) => ({
+            keyword: String(entry.keyword ?? ''),
+            normalReferenceUrl: entry.normal_reference_url ? String(entry.normal_reference_url) : null,
+            youtubeReferenceUrl: entry.youtube_reference_url ? String(entry.youtube_reference_url) : null,
+            youtubeSearchUrl: String(entry.youtube_search_url ?? ''),
+            cacheHit: Boolean(entry.cache_hit),
+          }))
+        : [],
+    }
+  }
+
+  await sleep(150)
+  const keyword = filePath.split('/').at(-1)?.replace(/\.[^.]+$/, '') || 'repository'
+
+  return {
+    repoId,
+    filePath,
+    keywordCount: 1,
+    references: [
+      {
+        keyword,
+        normalReferenceUrl: null,
+        youtubeReferenceUrl: null,
+        youtubeSearchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${keyword} youtube tutorial`)}`,
+        cacheHit: false,
+      },
+    ],
   }
 }
 
@@ -60,6 +116,47 @@ export async function fetchHeatmap(repoId: string) {
 
 export async function submitNLQuery(repoId: string, query: string): Promise<QueryResult> {
   if (hasRepoApi()) {
+    try {
+      const { data } = await api.post<any>(`/api/repos/${repoId}/search`, {
+        query,
+        top_files: 8,
+        top_functions: 5,
+        min_score: 0.3,
+      })
+
+      return {
+        fileIds: (data.flow ?? []).map((entry: any) => entry.file_path),
+        results: (data.flow ?? []).map((entry: any) => ({
+          fileId: entry.file_path,
+          path: entry.file_path,
+          score: entry.relevance_score,
+          snippet: entry.summary,
+        })),
+        answer: data.answer,
+        mermaid: data.mermaid,
+        totalMatched: data.total_matched,
+        flow: (data.flow ?? []).map((entry: any) => ({
+          rank: entry.rank,
+          fileId: entry.file_path,
+          path: entry.file_path,
+          score: entry.relevance_score,
+          scoreBreakdown: entry.score_breakdown ?? {},
+          layer: entry.layer,
+          language: entry.language,
+          isEntry: entry.is_entry,
+          summary: entry.summary,
+          matchedFunctions: (entry.matched_functions ?? []).map((fn: any) => ({
+            name: fn.name,
+            score: fn.score,
+          })),
+        })),
+      }
+    } catch (error: any) {
+      if (error?.response?.status && error.response.status !== 404) {
+        throw error
+      }
+    }
+
     const graph = await fetchGraph(repoId)
     let summariesPayload: { summaries: Array<{ path: string; summary: string }> } = { summaries: [] }
 

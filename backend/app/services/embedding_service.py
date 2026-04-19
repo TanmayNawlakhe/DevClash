@@ -16,12 +16,12 @@ Three embeddings per file:
 
 The embedding job reads files from the clone that was kept on disk by
 ``repo_job_processor`` (clone_path stored in the graph document).
-The clone is deleted by this service once all embeddings are generated.
+The clone is preserved after embedding so the UI can continue to serve
+file contents without re-cloning.
 """
 from __future__ import annotations
 
 import asyncio
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -218,7 +218,7 @@ async def run_embedding_job(repo_object_id: ObjectId) -> None:
     """Embed all files for a repository.
 
     Reads the clone that was kept on disk by repo_job_processor (path stored
-    in graph_doc.clone_path).  Deletes the clone when finished.
+    in graph_doc.clone_path). The clone is intentionally preserved.
     """
     db         = get_database()
     emb_col    = db["embeddings"]
@@ -289,20 +289,7 @@ async def run_embedding_job(repo_object_id: ObjectId) -> None:
             len(file_embeddings), elapsed,
         )
 
-        # Only delete the clone after SUCCESSFUL embedding.
-        # On failure/interrupt the clone is kept so the job can be retried
-        # without needing to re-analyze the repository.
-        if clone_path and clone_path.exists():
-            try:
-                shutil.rmtree(clone_path, ignore_errors=True)
-                # Remove clone_path from graph doc now that it's gone
-                await graphs_col.update_one(
-                    {"repo_id": repo_object_id},
-                    {"$unset": {"clone_path": ""}},
-                )
-                logger.info("[embed] Clone deleted: %s", clone_path)
-            except Exception:
-                pass
+        logger.info("[embed] Clone preserved after embedding: %s", clone_path)
 
     except Exception as exc:
         logger.exception("[embed] Job failed: %s", exc)

@@ -118,3 +118,18 @@ class EmbeddingStatusResponse(BaseModel):
     error_msg: str | None = None
     file_count: int = 0  # number of files embedded (0 until complete)
     message: str = ""
+
+
+class RepoKeywordReference(BaseModel):
+    keyword: str
+    normal_reference_url: str | None = None
+    youtube_reference_url: str | None = None
+    youtube_search_url: str
+    cache_hit: bool = False
+
+
+class RepoFileKeywordReferencesResponse(BaseModel):
+    repo_id: str
+    file_path: str
+    keyword_count: int
+    references: list[RepoKeywordReference] = []

@@ -29,7 +29,7 @@ export function RepoUrlInput({ compact = false, inverted = false }: { compact?: 
     formState: { errors, isSubmitting },
   } = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: { githubUrl: 'https://github.com/facebook/react' },
+    defaultValues: { githubUrl: '' },
   })
 
   async function onSubmit(values: z.infer<typeof schema>) {

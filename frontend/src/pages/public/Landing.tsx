@@ -255,7 +255,7 @@ export function Landing() {
               variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.1 } } }}
               className="relative z-10"
             >
-              <motion.div
+              {/* <motion.div
                 variants={fadeUp}
                 className="mb-5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/8 px-4 py-1.5 text-xs font-medium text-primary"
               >
@@ -264,7 +264,7 @@ export function Landing() {
                   <span className="relative inline-flex size-2 rounded-full bg-primary" />
                 </span>
                 Built for DevClash 2026 · Now in beta
-              </motion.div>
+              </motion.div> */}
 
               <motion.h1
                 variants={fadeUp}
