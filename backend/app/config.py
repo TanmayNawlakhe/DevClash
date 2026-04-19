@@ -42,5 +42,12 @@ class Settings:
     openrouter_site_url: str = os.getenv("OPENROUTER_SITE_URL", "")
     openrouter_app_name: str = os.getenv("OPENROUTER_APP_NAME", "DevClash")
 
+    # Tavily keyword-reference settings
+    tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
+    tavily_cache_prefix: str = os.getenv("TAVILY_CACHE_PREFIX", "kwref:v1")
+    tavily_cache_ttl_seconds: int = int(os.getenv("TAVILY_CACHE_TTL_SECONDS", "1209600"))
+    tavily_lock_ttl_seconds: int = int(os.getenv("TAVILY_LOCK_TTL_SECONDS", "15"))
+    tavily_lock_wait_ms: int = int(os.getenv("TAVILY_LOCK_WAIT_MS", "2000"))
+
 
 settings = Settings()

@@ -14,6 +14,8 @@ Copy `.env.example` to `.env` and set real values:
 - `MONGODB_DB_NAME`: database name
 - `REDIS_URL`: redis connection string (local or cloud)
 - `LOG_LEVEL`: INFO, DEBUG, etc.
+- `TAVILY_API_KEY`: API key for keyword reference lookups
+- `TAVILY_CACHE_TTL_SECONDS`: redis cache TTL for keyword references (optional)
 
 ## 3) Run API
 
@@ -125,6 +127,17 @@ Returns per-file graph details:
 - isEntry/isOrphan
 - imports (outgoing targets)
 - dependents (incoming sources)
+
+### File keyword references endpoint
+
+`GET /api/repos/{repo_id}/file-references?file_path=<repo-relative-path>`
+
+Returns per-keyword links for the selected file:
+- `normal_reference_url`: top Tavily result for `<keyword>`
+- `youtube_reference_url`: top Tavily result for `<keyword> youtube tutorial`
+- `youtube_search_url`: direct YouTube search URL
+
+Keyword references are cached globally in Redis by normalized keyword to avoid duplicate Tavily calls across files.
 
 ## Current MVP Analysis Scope
 
