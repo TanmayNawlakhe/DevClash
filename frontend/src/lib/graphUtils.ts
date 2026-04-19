@@ -5,13 +5,19 @@ import { fileName } from './utils'
 import { ownershipColor } from './ownershipColors'
 
 const LAYER_RANK: Record<string, number> = {
-  entry_point: 0,
-  api: 1,
-  business_logic: 2,
-  data: 3,
-  util: 4,
-  config: 4,
-  test: 5,
+  entry_point:     0,
+  ui:              0,
+  api:             1,
+  middleware:      1,
+  business_logic:  2,
+  integration:     2,
+  data:            3,
+  data_access:     3,
+  background_jobs: 4,
+  util:            4,
+  utility:         4,
+  config:          4,
+  test:            5,
 }
 
 export function buildCollapsedGraph(

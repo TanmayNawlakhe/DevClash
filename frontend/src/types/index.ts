@@ -51,9 +51,15 @@ export type Layer =
   | 'api'
   | 'business_logic'
   | 'data'
+  | 'data_access'
   | 'util'
+  | 'utility'
   | 'config'
   | 'test'
+  | 'middleware'
+  | 'ui'
+  | 'integration'
+  | 'background_jobs'
 
 export interface OwnerShare {
   author: string

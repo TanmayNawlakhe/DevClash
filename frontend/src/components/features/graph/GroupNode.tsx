@@ -1,26 +1,38 @@
 import { Handle, Position } from '@xyflow/react'
 import { motion } from 'framer-motion'
-import { ChevronDown, ChevronUp, Database, FileCode2, Globe, Layers, Settings, TestTube2, Wrench, Zap } from 'lucide-react'
+import { ChevronDown, ChevronUp, Database, FileCode2, Globe, Layers, Layout, Link2, Loader, Settings, TestTube2, Wrench, Zap } from 'lucide-react'
 import type { Layer } from '../../../types'
 
 const LAYER_ICONS: Record<Layer, React.ComponentType<{ className?: string }>> = {
-  entry_point: Zap,
-  api: Globe,
-  business_logic: Layers,
-  data: Database,
-  util: Wrench,
-  config: Settings,
-  test: TestTube2,
+  entry_point:     Zap,
+  api:             Globe,
+  business_logic:  Layers,
+  data:            Database,
+  data_access:     Database,
+  util:            Wrench,
+  utility:         Wrench,
+  config:          Settings,
+  test:            TestTube2,
+  middleware:      Link2,
+  ui:              Layout,
+  integration:     Link2,
+  background_jobs: Loader,
 }
 
 const LAYER_DESCRIPTIONS: Record<Layer, string> = {
-  entry_point: 'App entry & bootstrapping',
-  api: 'Routes, controllers & handlers',
-  business_logic: 'Core domain & services',
-  data: 'Models, schemas & repos',
-  util: 'Shared helpers & utilities',
-  config: 'Config & environment',
-  test: 'Test suites & fixtures',
+  entry_point:     'App entry & bootstrapping',
+  api:             'Routes, controllers & handlers',
+  business_logic:  'Core domain & services',
+  data:            'Models, schemas & repos',
+  data_access:     'Database queries & repositories',
+  util:            'Shared helpers & utilities',
+  utility:         'Shared helpers & utilities',
+  config:          'Config & environment',
+  test:            'Test suites & fixtures',
+  middleware:      'Request / response pipeline',
+  ui:              'UI components & views',
+  integration:     'Third-party & external services',
+  background_jobs: 'Async workers & scheduled tasks',
 }
 
 export function GroupNode({ data }: any) {
