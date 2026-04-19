@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -27,18 +28,194 @@ FILE_CLASSIFICATIONS: tuple[str, ...] = (
 	"background_jobs",
 )
 FILE_CLASSIFICATIONS_SET = set(FILE_CLASSIFICATIONS)
-DEFAULT_FILE_CLASSIFICATION = "utility"
+DEFAULT_FILE_CLASSIFICATION = "business_logic"
 
 
 class OpenRouterError(RuntimeError):
 	pass
 
 
-def _normalize_classification(raw_value: Any) -> str:
+def _infer_classification_from_path(path: str) -> str:
+	normalized = str(path or "").strip().lower()
+	filename = normalized.rsplit("/", 1)[-1]
+
+	if not normalized:
+		return DEFAULT_FILE_CLASSIFICATION
+
+	if (
+		"/test" in normalized
+		or "/tests/" in normalized
+		or ".spec." in filename
+		or ".test." in filename
+	):
+		return "test"
+
+	if (
+		normalized.endswith(".env")
+		or "/config/" in normalized
+		or filename in {"package.json", "pnpm-workspace.yaml", "dockerfile", "compose.yml", "compose.yaml"}
+		or filename.endswith(".config.js")
+		or filename.endswith(".config.ts")
+		or filename.endswith(".config.cjs")
+		or filename.endswith(".config.mjs")
+	):
+		return "config"
+
+	if "/middleware/" in normalized:
+		return "middleware"
+
+	if (
+		"/worker" in normalized
+		or "/jobs/" in normalized
+		or "/queue/" in normalized
+		or "/tasks/" in normalized
+		or "/cron/" in normalized
+	):
+		return "background_jobs"
+
+	if "/api/" in normalized or "/routes/" in normalized or "/controllers/" in normalized:
+		return "api"
+
+	if (
+		"/db/" in normalized
+		or "/database/" in normalized
+		or "/models/" in normalized
+		or "/repositories/" in normalized
+		or "/repo/" in normalized
+		or "/dao/" in normalized
+		or "/prisma/" in normalized
+		or "/migrations/" in normalized
+	):
+		return "data_access"
+
+	if "/integration/" in normalized or "/integrations/" in normalized or "/adapters/" in normalized:
+		return "integration"
+
+	if (
+		"/components/" in normalized
+		or "/pages/" in normalized
+		or "/views/" in normalized
+		or "/ui/" in normalized
+		or filename.endswith((".tsx", ".jsx", ".css", ".scss", ".html"))
+	):
+		return "ui"
+
+	if "/utils/" in normalized or "/lib/" in normalized or "/helpers/" in normalized:
+		return "utility"
+
+	if filename in {"main.py", "app.py", "server.py", "main.go", "server.go", "index.js", "index.ts", "index.jsx", "index.tsx"}:
+		return "entry_point"
+
+	return DEFAULT_FILE_CLASSIFICATION
+
+
+def _normalize_classification(raw_value: Any, *, path: str = "") -> str:
 	value = str(raw_value or "").strip().lower().replace("-", "_").replace(" ", "_")
 	if value in FILE_CLASSIFICATIONS_SET:
 		return value
+	if path:
+		return _infer_classification_from_path(path)
 	return DEFAULT_FILE_CLASSIFICATION
+
+
+_FENCE_START_RE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*")
+_FENCE_END_RE = re.compile(r"\s*```\s*$")
+
+
+def _strip_markdown_fences(text: str) -> str:
+	"""Remove leading/trailing markdown code fences, even when malformed."""
+	cleaned = text.strip()
+	if not cleaned.startswith("```"):
+		return cleaned
+
+	without_start = _FENCE_START_RE.sub("", cleaned, count=1)
+	without_end = _FENCE_END_RE.sub("", without_start, count=1)
+	return without_end.strip()
+
+
+def _extract_outer_json_region(text: str) -> str:
+	object_start = text.find("{")
+	object_end = text.rfind("}")
+	array_start = text.find("[")
+	array_end = text.rfind("]")
+
+	candidates: list[tuple[int, int]] = []
+	if object_start != -1 and object_end != -1 and object_end > object_start:
+		candidates.append((object_start, object_end + 1))
+	if array_start != -1 and array_end != -1 and array_end > array_start:
+		candidates.append((array_start, array_end + 1))
+
+	if not candidates:
+		return text
+
+	start, end = min(candidates, key=lambda pair: pair[0])
+	return text[start:end]
+
+
+def _escape_unescaped_newlines_in_strings(text: str) -> str:
+	"""Convert raw newlines inside JSON strings into escaped \\n sequences."""
+	out: list[str] = []
+	in_string = False
+	escaped = False
+
+	for ch in text:
+		if in_string:
+			if escaped:
+				out.append(ch)
+				escaped = False
+				continue
+
+			if ch == "\\":
+				out.append(ch)
+				escaped = True
+				continue
+
+			if ch == '"':
+				out.append(ch)
+				in_string = False
+				continue
+
+			if ch == "\n":
+				out.append("\\n")
+				continue
+
+			if ch == "\r":
+				continue
+
+			out.append(ch)
+			continue
+
+		out.append(ch)
+		if ch == '"':
+			in_string = True
+
+	return "".join(out)
+
+
+def _repair_common_json_issues(text: str) -> str:
+	cleaned = text.replace("\ufeff", "").strip()
+	# Remove trailing commas before object/array close tokens.
+	cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+	cleaned = _escape_unescaped_newlines_in_strings(cleaned)
+	return cleaned
+
+
+def _parse_json_candidate(candidate: str) -> dict[str, Any] | None:
+	if not candidate:
+		return None
+
+	for raw in (candidate, _repair_common_json_issues(candidate)):
+		try:
+			parsed = json.loads(raw)
+		except json.JSONDecodeError:
+			continue
+
+		if isinstance(parsed, dict):
+			return parsed
+		if isinstance(parsed, list):
+			return {"summaries": parsed}
+
+	return None
 
 
 def _extract_json_payload(text: str) -> dict[str, Any]:
@@ -47,19 +224,24 @@ def _extract_json_payload(text: str) -> dict[str, Any]:
 		logger.error("AI provider returned an empty response")
 		raise OpenRouterError("AI provider returned an empty response")
 
-	try:
-		return json.loads(cleaned)
-	except json.JSONDecodeError as exc:
-		logger.error("Failed to decode JSON from AI provider response: %s", cleaned)
-		start = cleaned.find("{")
-		end = cleaned.rfind("}")
-		if start != -1 and end != -1 and end > start:
-			try:
-				return json.loads(cleaned[start : end + 1])
-			except json.JSONDecodeError as fallback_exc:
-				logger.error("Fallback JSON decode failed: %s", fallback_exc)
-				raise OpenRouterError(f"AI response JSON decode fallback failed: {fallback_exc}") from fallback_exc
-		raise OpenRouterError(f"AI response JSON decode failed: {exc}") from exc
+	de_fenced = _strip_markdown_fences(cleaned)
+	region_from_cleaned = _extract_outer_json_region(cleaned)
+	region_from_defenced = _extract_outer_json_region(de_fenced)
+
+	candidates: list[str] = []
+	for candidate in (cleaned, de_fenced, region_from_cleaned, region_from_defenced):
+		normalized = candidate.strip()
+		if normalized and normalized not in candidates:
+			candidates.append(normalized)
+
+	for candidate in candidates:
+		parsed = _parse_json_candidate(candidate)
+		if parsed is not None:
+			return parsed
+
+	preview = cleaned if len(cleaned) <= 1200 else f"{cleaned[:1200]}..."
+	logger.error("AI response could not be parsed as JSON — all strategies failed: %s", preview)
+	raise OpenRouterError("AI response JSON decode failed after cleanup and repair")
 
 
 def _coerce_content_to_text(content: Any) -> str:
@@ -145,12 +327,22 @@ async def _call_groq(messages: list[dict[str, str]], max_tokens: int, model: str
 		"messages": messages,
 		"temperature": 0.2,
 		"max_tokens": max_tokens,
+		"response_format": {"type": "json_object"},
 	}
 
 	timeout = httpx.Timeout(settings.groq_timeout_seconds)
 	logger.info("Calling Groq with model %s for max_tokens %d", model, max_tokens)
 	async with httpx.AsyncClient(timeout=timeout) as client:
 		response = await client.post(settings.groq_api_url, headers=headers, json=payload)
+
+		if response.status_code >= 400 and "response_format" in response.text.lower():
+			logger.warning(
+				"Groq model %s rejected response_format=json_object. Retrying without json mode.",
+				model,
+			)
+			fallback_payload = dict(payload)
+			fallback_payload.pop("response_format", None)
+			response = await client.post(settings.groq_api_url, headers=headers, json=fallback_payload)
 
 	if response.status_code >= 400:
 		detail = response.text.strip()
@@ -583,7 +775,6 @@ async def generate_file_summaries_from_disk(
 			path = str(item.get("path", "")).strip()
 			# Accept either "file_summary" (new) or "summary" (old fallback)
 			file_summary = str(item.get("file_summary") or item.get("summary", "")).strip()
-			classification = _normalize_classification(item.get("classification"))
 			if not path or not file_summary:
 				continue
 			if path not in allowed_set:
@@ -594,6 +785,9 @@ async def generate_file_summaries_from_disk(
 					path,
 				)
 				continue
+
+			raw_classification = item.get("classification")
+			classification = _normalize_classification(raw_classification, path=path)
 
 			# Parse keywords
 			raw_keywords = item.get("keywords", [])

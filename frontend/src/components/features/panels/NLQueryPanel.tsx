@@ -8,7 +8,17 @@ import { renderMermaid } from '../../../lib/mermaidRenderer'
 import { useGraphStore } from '../../../store/graphStore'
 import { useUIStore } from '../../../store/uiStore'
 
-export function NLQueryPanel({ open, onOpenChange, repoId }: { open: boolean; onOpenChange: (open: boolean) => void; repoId: string }) {
+export function NLQueryPanel({
+  open,
+  onOpenChange,
+  queryEnabled,
+  repoId,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  queryEnabled: boolean
+  repoId: string
+}) {
   const [query, setQuery] = useState('')
   const mutation = useNLQuery(repoId)
   const setSelectedNodes = useGraphStore((state) => state.setSelectedNodes)
@@ -17,6 +27,10 @@ export function NLQueryPanel({ open, onOpenChange, repoId }: { open: boolean; on
   const examples = ['Where is auth handled?', 'Show me the payment flow', 'What tests cover the User model?']
 
   async function submit(value = query) {
+    if (!queryEnabled) {
+      toast.info('Generate embeddings first. Query is enabled once embeddings are ready.')
+      return
+    }
     if (!value.trim()) return
     try {
       const result = await mutation.mutateAsync(value)
@@ -69,19 +83,26 @@ export function NLQueryPanel({ open, onOpenChange, repoId }: { open: boolean; on
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            disabled={!queryEnabled}
             placeholder="Ask anything about this codebase..."
             className="h-10 flex-1 bg-transparent font-mono outline-none"
           />
-          <Button type="submit" disabled={mutation.isPending}>
+          <Button type="submit" disabled={mutation.isPending || !queryEnabled}>
             {mutation.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             Ask
           </Button>
         </div>
       </form>
+      {!queryEnabled ? (
+        <p className="mt-3 text-sm text-muted-foreground">
+          Query is locked until embeddings finish. Click Generate Embeddings first.
+        </p>
+      ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         {examples.map((example) => (
           <button
             key={example}
+            disabled={!queryEnabled || mutation.isPending}
             className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-accent"
             onClick={() => {
               setQuery(example)

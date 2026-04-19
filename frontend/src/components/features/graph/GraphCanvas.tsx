@@ -7,9 +7,11 @@ import {
   useNodesState,
   useReactFlow,
 } from '@xyflow/react'
+import { useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import { FileCode2, Layers, Menu, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { GraphToolbar } from './GraphToolbar'
 import { GraphMinimap } from './GraphMinimap'
 import { NodeCustom } from './NodeCustom'
@@ -20,6 +22,7 @@ import { FlowDiagramModal } from '../panels/FlowDiagramModal'
 import { NLQueryPanel } from '../panels/NLQueryPanel'
 import { buildCollapsedGraph, mapToFlowEdges, mapToFlowNodes } from '../../../lib/graphUtils'
 import { useBlastRadius } from '../../../hooks/useBlastRadius'
+import { fetchRepoEmbeddingStatus } from '../../../services/repoService'
 import { useGraphStore } from '../../../store/graphStore'
 import { useOwnershipStore } from '../../../store/ownershipStore'
 import { useUIStore } from '../../../store/uiStore'
@@ -54,6 +57,16 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
   const selectedContributor = useOwnershipStore((state) => state.selectedContributor)
   const setActivePanel = useUIStore((state) => state.setActivePanel)
   const { fitView } = useReactFlow()
+
+  const embeddingsQuery = useQuery({
+    queryKey: ['repo-embeddings-status', graph.meta.repoId],
+    queryFn: () => fetchRepoEmbeddingStatus(graph.meta.repoId),
+    enabled: Boolean(graph.meta.repoId),
+    staleTime: 1000,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'processing' ? 3000 : false,
+  })
+  const queryEnabled = embeddingsQuery.data?.status === 'complete'
 
   const [queryOpen, setQueryOpen] = useState(false)
   const [flowOpen, setFlowOpen] = useState(false)
@@ -251,16 +264,25 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
   ])
 
   useEffect(() => {
+    const openQueryIfReady = () => {
+      if (!queryEnabled) {
+        toast.info('Generate embeddings first. Query is enabled once embeddings are ready.')
+        return
+      }
+      setQueryOpen(true)
+      setToolbarOpen(false)
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setQueryOpen(true)
+        openQueryIfReady()
       }
       if (event.key === 'Escape') setToolbarOpen(false)
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [queryEnabled])
 
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
@@ -336,7 +358,12 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
                 >
                   <GraphToolbar
                     repoId={graph.meta.repoId}
+                    queryEnabled={queryEnabled}
                     onOpenQuery={() => {
+                      if (!queryEnabled) {
+                        toast.info('Generate embeddings first. Query is enabled once embeddings are ready.')
+                        return
+                      }
                       setQueryOpen(true)
                       setToolbarOpen(false)
                     }}
@@ -405,7 +432,7 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
         <GraphMinimap />
       </ReactFlow>
 
-      <NLQueryPanel open={queryOpen} onOpenChange={setQueryOpen} repoId={graph.meta.repoId} />
+      <NLQueryPanel open={queryOpen} onOpenChange={setQueryOpen} repoId={graph.meta.repoId} queryEnabled={queryEnabled} />
       <FlowDiagramModal
         open={flowOpen}
         onOpenChange={setFlowOpen}
