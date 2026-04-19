@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from typing import Any
+from urllib.parse import quote_plus
 
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
@@ -35,6 +36,10 @@ logger = get_logger(__name__, level=settings.log_level)
 router = APIRouter(prefix="/api/repos", tags=["repos"])
 
 MAX_SOURCE_PREVIEW_CHARS = 80_000
+
+
+def _youtube_search_url(keyword: str) -> str:
+    return f"https://www.youtube.com/results?search_query={quote_plus(keyword + ' youtube tutorial')}"
 
 
 async def ensure_repo_indexes() -> None:
@@ -487,10 +492,22 @@ async def get_repo_file_references(
         try:
             payload = await get_or_fetch_keyword_reference_urls(keyword)
         except RuntimeError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=str(exc),
-            ) from exc
+            logger.warning(
+                "[file-references] Tavily unavailable for keyword '%s' in repo %s: %s",
+                keyword,
+                repo_id,
+                exc,
+            )
+            references.append(
+                RepoKeywordReference(
+                    keyword=keyword,
+                    normal_reference_url=None,
+                    youtube_reference_url=None,
+                    youtube_search_url=_youtube_search_url(keyword),
+                    cache_hit=False,
+                )
+            )
+            continue
         references.append(
             RepoKeywordReference(
                 keyword=keyword,
