@@ -1,8 +1,172 @@
-import type { ArchitectureEdge, ArchitectureNode, FileNode, GraphData, GraphEdge, LayoutMode, ViewMode } from '../types'
+import type { ArchitectureEdge, ArchitectureNode, FileNode, GraphData, GraphEdge, Layer, LayoutMode, ViewMode } from '../types'
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
 import { LAYER_COLORS } from './constants'
 import { fileName } from './utils'
 import { ownershipColor } from './ownershipColors'
+
+const LAYER_RANK: Record<string, number> = {
+  entry_point: 0,
+  api: 1,
+  business_logic: 2,
+  data: 3,
+  util: 4,
+  config: 4,
+  test: 5,
+}
+
+export function buildCollapsedGraph(
+  graph: GraphData,
+  expandedLayer: Layer | null,
+  _viewMode: ViewMode,
+): { nodes: any[]; edges: ArchitectureEdge[] } {
+  /*
+   * Pipeline layout — LEFT to RIGHT by rank.
+   *
+   * Collapsed chip:  fixed GROUP_W wide.
+   * Expanded group:  chip disappears; file nodes take its place in the row,
+   *                  spanning exactly as wide as the file grid needs.
+   *                  Subsequent chips shift right to avoid overlap.
+   *
+   * All group chips sit at y = PIPELINE_Y.
+   * File nodes (when expanded) also start at PIPELINE_Y and grow downward in rows.
+   *
+   * Edges:
+   *   • Between two collapsed chips  → chip ↔ chip  (de-duped)
+   *   • From collapsed chip to file  → chip ↔ file  (per actual graph edge)
+   *   • Intra-expanded-group edges   → skipped (visual noise)
+   */
+  const GROUP_W     = 220
+  const COL_GAP     = 80    // horizontal gap between pipeline elements
+  const PIPELINE_Y  = 60    // y of chips and top of file grids
+  const FILE_W      = 210   // node width estimate for spacing maths
+  const FILE_H_GAP  = 230   // centre-to-centre x between file nodes
+  const FILE_V_GAP  = 172   // centre-to-centre y between file rows
+  const GRID_PAD_L  = 8     // left padding inside expanded area
+  const GRID_PAD_R  = 40    // right padding after last file (breathing room)
+
+  // Group nodes by layer
+  const groups = new Map<Layer, FileNode[]>()
+  for (const node of graph.nodes) {
+    const arr = groups.get(node.layer) ?? []
+    arr.push(node)
+    groups.set(node.layer, arr)
+  }
+  if (!groups.size) return { nodes: [], edges: [] }
+
+  // Stable left-to-right order: rank first, then alphabetical for ties
+  const sortedLayers = [...groups.keys()].sort((a, b) => {
+    const rd = (LAYER_RANK[a] ?? 4) - (LAYER_RANK[b] ?? 4)
+    return rd !== 0 ? rd : a.localeCompare(b)
+  })
+
+  // Map every file ID to its layer (needed for edge routing)
+  const nodeToLayer = new Map<string, Layer>()
+  for (const [layer, files] of groups) {
+    for (const f of files) nodeToLayer.set(f.id, layer)
+  }
+
+  // Helper: how many columns for an expanded grid (roughly square)
+  const gridCols = (n: number) => Math.min(6, Math.max(1, Math.ceil(Math.sqrt(n))))
+
+  // Compute sequential x-position for each pipeline element
+  const groupX = new Map<Layer, number>()
+  let curX = COL_GAP
+
+  for (const layer of sortedLayers) {
+    groupX.set(layer, curX)
+    if (layer === expandedLayer) {
+      const n    = groups.get(layer)!.length
+      const cols = gridCols(n)
+      const expandedW = GRID_PAD_L + (cols - 1) * FILE_H_GAP + FILE_W + GRID_PAD_R
+      curX += expandedW + COL_GAP
+    } else {
+      curX += GROUP_W + COL_GAP
+    }
+  }
+
+  const priorityMax = Math.max(1, ...graph.nodes.map((n) => n.priorityScore))
+  const rfNodes: any[] = []
+
+  for (const layer of sortedLayers) {
+    const files = groups.get(layer)!
+    const gx    = groupX.get(layer)!
+    const isExp = layer === expandedLayer
+
+    if (!isExp) {
+      // ── Collapsed chip ────────────────────────────────────────────────────
+      rfNodes.push({
+        id: `group-${layer}`,
+        type: 'group',
+        position: { x: gx, y: PIPELINE_Y },
+        data: {
+          layer,
+          fileCount: files.length,
+          filePaths: files.map((f) => f.path),
+          color:   LAYER_COLORS[layer]?.hex   ?? 'var(--primary)',
+          label:   LAYER_COLORS[layer]?.label ?? layer,
+          isExpanded: false,
+        },
+      })
+    } else {
+      // ── Expanded file grid ────────────────────────────────────────────────
+      // Chip is gone; file nodes take its place in the pipeline row.
+      const cols = gridCols(files.length)
+
+      files.forEach((file, i) => {
+        const col = i % cols
+        const row = Math.floor(i / cols)
+        rfNodes.push({
+          id: file.id,
+          type: 'architecture',
+          position: {
+            x: gx + GRID_PAD_L + col * FILE_H_GAP,
+            y: PIPELINE_Y + row * FILE_V_GAP,
+          },
+          data: { ...file, priorityScore: file.priorityScore / priorityMax },
+          style: {
+            ['--node-layer' as string]: LAYER_COLORS[file.layer].hex,
+            ['--node-owner' as string]: ownershipColor(file.primaryOwner),
+          },
+        })
+      })
+    }
+  }
+
+  // ── Edges ─────────────────────────────────────────────────────────────────
+  // For collapsed layers  → use group chip ID.
+  // For the expanded layer → use the individual file ID.
+  // Skip intra-expanded-group connections (visual noise).
+  const seen = new Set<string>()
+  const rfEdges: ArchitectureEdge[] = []
+
+  for (const edge of graph.edges) {
+    const srcLayer = nodeToLayer.get(edge.source)
+    const tgtLayer = nodeToLayer.get(edge.target)
+    if (!srcLayer || !tgtLayer) continue
+
+    // Skip edges entirely within the expanded group
+    if (srcLayer === expandedLayer && tgtLayer === expandedLayer) continue
+
+    const srcId = srcLayer === expandedLayer ? edge.source : `group-${srcLayer}`
+    const tgtId = tgtLayer === expandedLayer ? edge.target : `group-${tgtLayer}`
+    if (srcId === tgtId) continue
+
+    const key = `${srcId}-->${tgtId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    rfEdges.push({
+      id:     key,
+      source: srcId,
+      target: tgtId,
+      type:   'architecture',
+      animated: false,
+      data: { importType: 'direct', symbol: undefined, isGroupEdge: true },
+    })
+  }
+
+  return { nodes: rfNodes, edges: rfEdges }
+}
 
 type LayoutPoint = { x: number; y: number }
 type SimulationNode = { id: string; x: number; y: number; centrality: number }

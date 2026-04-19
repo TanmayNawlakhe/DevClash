@@ -8,23 +8,24 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Menu, X } from 'lucide-react'
+import { FileCode2, Layers, Menu, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GraphToolbar } from './GraphToolbar'
 import { GraphMinimap } from './GraphMinimap'
 import { NodeCustom } from './NodeCustom'
+import { GroupNode } from './GroupNode'
 import { EdgeCustom } from './EdgeCustom'
 import { ContributorLegend } from '../ownership/ContributorLegend'
 import { FlowDiagramModal } from '../panels/FlowDiagramModal'
 import { NLQueryPanel } from '../panels/NLQueryPanel'
-import { mapToFlowEdges, mapToFlowNodes } from '../../../lib/graphUtils'
+import { buildCollapsedGraph, mapToFlowEdges, mapToFlowNodes } from '../../../lib/graphUtils'
 import { useBlastRadius } from '../../../hooks/useBlastRadius'
 import { useGraphStore } from '../../../store/graphStore'
 import { useOwnershipStore } from '../../../store/ownershipStore'
 import { useUIStore } from '../../../store/uiStore'
-import type { GraphData } from '../../../types'
+import type { GraphData, Layer } from '../../../types'
 
-const nodeTypes = { architecture: NodeCustom }
+const nodeTypes = { architecture: NodeCustom, group: GroupNode }
 const edgeTypes = { architecture: EdgeCustom }
 
 export function GraphCanvas({ graph }: { graph: GraphData }) {
@@ -45,6 +46,11 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
   const setSelectedNodes = useGraphStore((state) => state.setSelectedNodes)
   const setHoveredNode = useGraphStore((state) => state.setHoveredNode)
   const selectedNodeIds = useGraphStore((state) => state.selectedNodeIds)
+  const collapsedView = useGraphStore((state) => state.collapsedView)
+  const expandedLayer = useGraphStore((state) => state.expandedLayer)
+  const setCollapsedView = useGraphStore((state) => state.setCollapsedView)
+  const toggleLayerExpanded = useGraphStore((state) => state.toggleLayerExpanded)
+  const collapseAllLayers = useGraphStore((state) => state.collapseAllLayers)
   const selectedContributor = useOwnershipStore((state) => state.selectedContributor)
   const setActivePanel = useUIStore((state) => state.setActivePanel)
   const { fitView } = useReactFlow()
@@ -55,7 +61,11 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
   const [isViewportMoving, setIsViewportMoving] = useState(false)
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
-  const blastMap = useBlastRadius(hoveredNodeId, graph.edges, blastRadiusEnabled && !isViewportMoving)
+  const blastMap = useBlastRadius(
+    hoveredNodeId,
+    graph.edges,
+    blastRadiusEnabled && !isViewportMoving && !collapsedView,
+  )
 
   const filteredGraph = useMemo(() => {
     const search = filters.search.toLowerCase()
@@ -64,7 +74,8 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
       if (filters.entryOnly && !node.isEntry) return false
       if (filters.layers.length && !filters.layers.includes(node.layer)) return false
       if (filters.languages.length && !filters.languages.includes(node.language)) return false
-      if (search && !node.path.toLowerCase().includes(search) && !node.summary.toLowerCase().includes(search)) return false
+      if (search && !node.path.toLowerCase().includes(search) && !node.summary.toLowerCase().includes(search))
+        return false
       return true
     })
     const allowedIds = new Set(allowedNodes.map((node) => node.id))
@@ -75,25 +86,39 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
     }
   }, [filters, graph])
 
+  // ── Collapsed graph ──────────────────────────────────────────────────────────
+  const collapsedGraph = useMemo(
+    () =>
+      collapsedView
+        ? buildCollapsedGraph(filteredGraph, expandedLayer as Layer | null, viewMode)
+        : null,
+    [collapsedView, expandedLayer, filteredGraph, viewMode],
+  )
+
+  // ── Detailed graph ───────────────────────────────────────────────────────────
   const baseFlowNodes = useMemo(
-    () => mapToFlowNodes(filteredGraph, viewMode, layoutMode),
-    [filteredGraph, layoutMode, viewMode],
+    () => (!collapsedView ? mapToFlowNodes(filteredGraph, viewMode, layoutMode) : []),
+    [collapsedView, filteredGraph, layoutMode, viewMode],
   )
 
   const baseFlowEdges = useMemo(
-    () => mapToFlowEdges(filteredGraph.edges),
-    [filteredGraph.edges],
+    () => (!collapsedView ? mapToFlowEdges(filteredGraph.edges) : []),
+    [collapsedView, filteredGraph.edges],
   )
 
   const layoutStabilityKey = useMemo(
-    () => `${layoutMode}|${viewMode}|${filteredGraph.nodes.map((node) => node.id).join(',')}|${filteredGraph.edges.map((edge) => edge.id).join(',')}`,
-    [filteredGraph.edges, filteredGraph.nodes, layoutMode, viewMode],
+    () =>
+      collapsedView
+        ? `collapsed|${expandedLayer ?? ''}|${filteredGraph.nodes.map((n) => n.id).join(',')}`
+        : `${layoutMode}|${viewMode}|${filteredGraph.nodes.map((n) => n.id).join(',')}|${filteredGraph.edges.map((e) => e.id).join(',')}`,
+    [collapsedView, expandedLayer, filteredGraph.edges, filteredGraph.nodes, layoutMode, viewMode],
   )
 
   const lastLayoutKeyRef = useRef(layoutStabilityKey)
 
   const hoverEdgeDepthMap = useMemo(() => {
-    if (!hoveredNodeId || !blastRadiusEnabled || isViewportMoving) return new Map<string, number>()
+    if (collapsedView || !hoveredNodeId || !blastRadiusEnabled || isViewportMoving)
+      return new Map<string, number>()
 
     const incomingByTarget = new Map<string, typeof filteredGraph.edges>()
     const outgoingBySource = new Map<string, typeof filteredGraph.edges>()
@@ -121,9 +146,8 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
       const traverse = (edgeId: string, neighborNodeId: string) => {
         const nextDepth = currentDepth + 1
         const existingEdgeDepth = edgeDepth.get(edgeId)
-        if (existingEdgeDepth === undefined || nextDepth < existingEdgeDepth) {
+        if (existingEdgeDepth === undefined || nextDepth < existingEdgeDepth)
           edgeDepth.set(edgeId, nextDepth)
-        }
 
         const existingNodeDepth = nodeDepth.get(neighborNodeId)
         if (existingNodeDepth === undefined || nextDepth < existingNodeDepth) {
@@ -132,19 +156,36 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
         }
       }
 
-      ;(incomingByTarget.get(currentId) ?? []).forEach((edge) => {
-        traverse(edge.id, edge.source)
-      })
-
-      ;(outgoingBySource.get(currentId) ?? []).forEach((edge) => {
-        traverse(edge.id, edge.target)
-      })
+      ;(incomingByTarget.get(currentId) ?? []).forEach((edge) => traverse(edge.id, edge.source))
+      ;(outgoingBySource.get(currentId) ?? []).forEach((edge) => traverse(edge.id, edge.target))
     }
 
     return edgeDepth
-  }, [blastRadiusEnabled, filteredGraph.edges, hoveredNodeId, isViewportMoving])
+  }, [blastRadiusEnabled, collapsedView, filteredGraph.edges, hoveredNodeId, isViewportMoving])
 
+  // ── Apply nodes + edges ──────────────────────────────────────────────────────
   useEffect(() => {
+    if (collapsedView) {
+      if (!collapsedGraph) return
+
+      const markerColor = 'color-mix(in oklch, var(--primary) 65%, var(--border))'
+      setNodes(collapsedGraph.nodes)
+      setEdges(
+        collapsedGraph.edges.map((edge) => ({
+          ...edge,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 22,
+            height: 22,
+            color: markerColor,
+          },
+        })),
+      )
+      lastLayoutKeyRef.current = layoutStabilityKey
+      return
+    }
+
+    // Detailed view — preserve user-dragged positions when layout hasn't changed
     const shouldResetLayout = lastLayoutKeyRef.current !== layoutStabilityKey
 
     const nextNodes = baseFlowNodes.map((node) => ({
@@ -154,10 +195,7 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
     }))
     const nextEdges = baseFlowEdges.map((edge) => ({
       ...edge,
-      data: {
-        ...edge.data,
-        pathDepth: hoverEdgeDepthMap.get(edge.id),
-      },
+      data: { ...edge.data, pathDepth: hoverEdgeDepthMap.get(edge.id) },
       markerEnd: {
         type: MarkerType.ArrowClosed,
         width: 18,
@@ -169,32 +207,48 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
     }))
 
     setNodes((currentNodes) => {
-      if (shouldResetLayout) {
-        return nextNodes
-      }
-
+      if (shouldResetLayout) return nextNodes
       const currentNodeMap = new Map(currentNodes.map((node) => [node.id, node]))
-
       return nextNodes.map((node) => {
         const currentNode = currentNodeMap.get(node.id)
-        if (!currentNode) return node
-
-        return {
-          ...node,
-          position: currentNode.position,
-        }
+        return currentNode ? { ...node, position: currentNode.position } : node
       })
     })
-
     setEdges(nextEdges)
-
     lastLayoutKeyRef.current = layoutStabilityKey
-  }, [baseFlowEdges, baseFlowNodes, blastMap, hoverEdgeDepthMap, layoutStabilityKey, selectedContributor, setEdges, setNodes])
+  }, [
+    baseFlowEdges,
+    baseFlowNodes,
+    blastMap,
+    collapsedGraph,
+    collapsedView,
+    hoverEdgeDepthMap,
+    layoutStabilityKey,
+    selectedContributor,
+    setEdges,
+    setNodes,
+  ])
 
+  // ── Fit view on layout / filter / mode changes ────────────────────────────────
   useEffect(() => {
-    const timeout = window.setTimeout(() => fitView({ padding: 0.24, duration: 700 }), 80)
+    const timeout = window.setTimeout(
+      () => fitView({ padding: expandedLayer ? 0.18 : 0.22, duration: 700 }),
+      80,
+    )
     return () => window.clearTimeout(timeout)
-  }, [filters.entryOnly, filters.layers, filters.languages, filters.search, filters.showOrphans, fitView, layoutMode, viewMode])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    collapsedView,
+    expandedLayer,
+    filters.entryOnly,
+    filters.layers,
+    filters.languages,
+    filters.search,
+    filters.showOrphans,
+    fitView,
+    layoutMode,
+    viewMode,
+  ])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -210,10 +264,14 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
 
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
+      if (node.type === 'group') {
+        toggleLayerExpanded(node.data.layer as Layer)
+        return
+      }
       setSelectedNode(node.id)
       setActivePanel('file')
     },
-    [setActivePanel, setSelectedNode],
+    [setActivePanel, setSelectedNode, toggleLayerExpanded],
   )
 
   return (
@@ -227,7 +285,7 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         onNodeMouseEnter={(_, node) => {
-          if (isViewportMoving) return
+          if (isViewportMoving || collapsedView) return
           setHoveredNode(node.id)
         }}
         onNodeMouseLeave={() => {
@@ -251,7 +309,7 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
         elevateNodesOnSelect
         onlyRenderVisibleElements
         fitView
-        fitViewOptions={{ padding: 0.24, duration: 700 }}
+        fitViewOptions={{ padding: 0.22, duration: 700 }}
         minZoom={0.25}
         maxZoom={1.7}
       >
@@ -276,36 +334,84 @@ function GraphCanvasInner({ graph }: { graph: GraphData }) {
                   transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                   className="origin-top-left"
                 >
-                  <GraphToolbar repoId={graph.meta.repoId} onOpenQuery={() => { setQueryOpen(true); setToolbarOpen(false) }} />
+                  <GraphToolbar
+                    repoId={graph.meta.repoId}
+                    onOpenQuery={() => {
+                      setQueryOpen(true)
+                      setToolbarOpen(false)
+                    }}
+                  />
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
         </Panel>
 
-        {viewMode === 'ownership' ? (
-          <Panel position="top-right">
-            <ContributorLegend />
-          </Panel>
-        ) : null}
+        {/* ── Top-right: view toggle + optional ownership legend ── */}
+        <Panel position="top-right">
+          <div className="flex flex-col items-end gap-2">
+            {/* Simplified / Detailed pill */}
+            <div className="glass-panel flex overflow-hidden rounded-lg border border-border shadow-md">
+              <button
+                onClick={() => {
+                  setCollapsedView(true)
+                  collapseAllLayers()
+                }}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
+                  collapsedView
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-muted'
+                }`}
+              >
+                <Layers className="size-3.5" />
+                Simplified
+              </button>
+              <div className="w-px bg-border" />
+              <button
+                onClick={() => setCollapsedView(false)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
+                  !collapsedView
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-muted'
+                }`}
+              >
+                <FileCode2 className="size-3.5" />
+                Detailed
+              </button>
+            </div>
 
-        <Panel position="bottom-left">
-          <button
-            className="glass-panel rounded-lg px-3 py-2 text-sm shadow-sm transition-colors hover:bg-accent"
-            onClick={() => setFlowOpen(true)}
-          >
-            Explain Module Flow
-            {selectedNodeIds.length > 1 ? (
-              <span className="ml-2 font-mono text-xs text-primary">{selectedNodeIds.length} files</span>
-            ) : null}
-          </button>
+            {/* Collapse button — appears when a group is expanded */}
+            <AnimatePresence>
+              {collapsedView && expandedLayer !== null && (
+                <motion.button
+                  key="collapse-group"
+                  initial={{ opacity: 0, y: -6, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.95 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+                  onClick={collapseAllLayers}
+                  className="glass-panel rounded-lg border border-border px-3 py-2 text-xs font-medium shadow-md transition-colors hover:bg-muted"
+                >
+                  Collapse group
+                </motion.button>
+              )}
+            </AnimatePresence>
+
+            {/* Ownership legend */}
+            {viewMode === 'ownership' && <ContributorLegend />}
+          </div>
         </Panel>
 
         <GraphMinimap />
       </ReactFlow>
 
       <NLQueryPanel open={queryOpen} onOpenChange={setQueryOpen} repoId={graph.meta.repoId} />
-      <FlowDiagramModal open={flowOpen} onOpenChange={setFlowOpen} repoId={graph.meta.repoId} fileIds={selectedNodeIds} />
+      <FlowDiagramModal
+        open={flowOpen}
+        onOpenChange={setFlowOpen}
+        repoId={graph.meta.repoId}
+        fileIds={selectedNodeIds}
+      />
     </div>
   )
 }

@@ -98,6 +98,28 @@ def _read_source_preview(clone_path: Path, file_path: str) -> str | None:
         return None
 
 
+def _count_lines_from_clone(clone_path: Path, file_path: str) -> int | None:
+    try:
+        base = clone_path.resolve()
+        candidate = (base / Path(file_path)).resolve()
+        candidate.relative_to(base)
+        if not candidate.is_file():
+            return None
+
+        content = candidate.read_text(encoding="utf-8", errors="ignore")
+        normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+        return max(1, len(normalized.split("\n")))
+    except Exception:
+        return None
+
+
+def _node_line_count(node: dict[str, Any]) -> int:
+    try:
+        return int(node.get("data", {}).get("lineCount") or 0)
+    except Exception:
+        return 0
+
+
 def _ensure_preview_clone(repo_id: str, github_url: str) -> Path | None:
     try:
         clone_base = Path(settings.repo_clone_base_dir)
@@ -288,6 +310,29 @@ async def get_repo_graph(
 
     nodes = graph_doc.get("nodes", [])
     edges = graph_doc.get("edges", [])
+
+    clone_path_raw = graph_doc.get("clone_path")
+    if clone_path_raw and any(_node_line_count(node) <= 0 for node in nodes):
+        clone_path = Path(str(clone_path_raw))
+        did_update = False
+        for node in nodes:
+            if _node_line_count(node) > 0:
+                continue
+
+            file_id = str(node.get("id", ""))
+            line_count = _count_lines_from_clone(clone_path, file_id)
+            if line_count is None:
+                continue
+
+            node.setdefault("data", {})["lineCount"] = line_count
+            did_update = True
+
+        if did_update:
+            await db["graphs"].update_one(
+                {"repo_id": repo_object_id},
+                {"$set": {"nodes": nodes}},
+            )
+
     filtered_nodes, filtered_edges = _filter_graph_payload(
         nodes=nodes,
         edges=edges,

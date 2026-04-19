@@ -29,7 +29,7 @@ export function LoginForm() {
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: 'avery@arclens.dev', password: 'arclens-demo', remember: true },
+    defaultValues: { email: '', password: '', remember: false },
   })
 
   const remember = watch('remember')

@@ -177,4 +177,4 @@ export interface FileDetail extends FileNode {
 }
 
 export type ArchitectureNode = Node<FileNode & Record<string, unknown>>
-export type ArchitectureEdge = Edge<{ importType: GraphEdge['importType']; symbol?: string }>
+export type ArchitectureEdge = Edge<{ importType: GraphEdge['importType']; symbol?: string; isGroupEdge?: boolean }>

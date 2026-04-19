@@ -45,7 +45,9 @@ export function NodeCustom({ data, selected }: any) {
               : '0 10px 26px color-mix(in oklch, var(--foreground) 10%, transparent)',
         }}
       >
+        {/* All four handles — React Flow picks the closest one per edge direction */}
         <Handle type="target" position={Position.Top} className="opacity-0" />
+        <Handle type="target" position={Position.Left} className="opacity-0" />
         <div className="flex items-center gap-2">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-md shadow-sm" style={{ background: `color-mix(in oklch, ${fill} 18%, transparent)`, color: fill }}>
             <FileCode2 className="size-4" />
@@ -67,6 +69,7 @@ export function NodeCustom({ data, selected }: any) {
         </div>
         {highRisk ? <span className="absolute -inset-1 -z-10 animate-pulse rounded-lg border border-destructive/40" /> : null}
         <Handle type="source" position={Position.Bottom} className="opacity-0" />
+        <Handle type="source" position={Position.Right} className="opacity-0" />
       </motion.div>
     </Tooltip>
   )
