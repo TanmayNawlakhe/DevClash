@@ -166,7 +166,7 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                 if fs.get("name") and fs.get("summary")
             }
 
-        # Annotate each node's data with AI-generated summary, keywords,
+        # Annotate each node's data with AI-generated summary, classification, keywords,
         # and per-function summaries (written into function objects in-place)
         for node in nodes:
             path = str(node.get("id", ""))
@@ -175,6 +175,7 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                 continue
             data = node.setdefault("data", {})
             data["summary"] = v.get("summary", "")
+            data["classification"] = v.get("classification", "utility")
             data["keywords"] = v.get("keywords", [])
 
             # Merge function summary into each function object
@@ -185,7 +186,7 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
                     func["summary"] = fn_map[name]
 
         logger.info(
-            "[job] Merged AI summaries + keywords into %d nodes",
+            "[job] Merged AI summaries + classification + keywords into %d nodes",
             len(summaries_by_path),
         )
 
@@ -196,11 +197,12 @@ async def process_repo_job(repo_object_id: ObjectId) -> None:
 
         file_paths: list[str] = [str(n.get("id", "")) for n in nodes if n.get("id")]
 
-        # Convert {path: {summary, keywords, function_summaries}} → flat list for quick API access
+        # Convert {path: {summary, classification, keywords, function_summaries}} → flat list for quick API access
         summaries_list = [
             {
                 "path": p,
                 "summary": v.get("summary", "") if isinstance(v, dict) else str(v),
+                "classification": v.get("classification", "utility") if isinstance(v, dict) else "utility",
                 "keywords": v.get("keywords", []) if isinstance(v, dict) else [],
                 "function_summaries": v.get("function_summaries", []) if isinstance(v, dict) else [],
             }

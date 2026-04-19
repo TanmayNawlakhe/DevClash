@@ -32,6 +32,24 @@ logger = get_logger(__name__, level=settings.log_level)
 router = APIRouter(prefix="/api/repos", tags=["repos"])
 
 MAX_SOURCE_PREVIEW_CHARS = 80_000
+ALLOWED_CLASSIFICATIONS = {
+    "config",
+    "business_logic",
+    "api",
+    "data_access",
+    "middleware",
+    "ui",
+    "test",
+    "utility",
+    "entry_point",
+    "integration",
+    "background_jobs",
+}
+
+
+def _normalize_classification(raw_value: Any) -> str:
+    value = str(raw_value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return value if value in ALLOWED_CLASSIFICATIONS else "utility"
 
 
 async def ensure_repo_indexes() -> None:
@@ -363,6 +381,7 @@ async def get_repo_summaries(repo_id: str) -> RepoSummariesResponse:
         RepoFileSummary(
             path=str(item.get("path", "")),
             summary=str(item.get("summary", "")),
+            classification=_normalize_classification(item.get("classification")),
             keywords=[str(k) for k in item.get("keywords", []) if k],
             function_summaries=[
                 RepoFunctionSummary(

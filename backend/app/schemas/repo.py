@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -80,9 +80,25 @@ class RepoFileDetailResponse(BaseModel):
     function_count: int = 0
 
 
+FileClassification = Literal[
+    "config",
+    "business_logic",
+    "api",
+    "data_access",
+    "middleware",
+    "ui",
+    "test",
+    "utility",
+    "entry_point",
+    "integration",
+    "background_jobs",
+]
+
+
 class RepoFileSummary(BaseModel):
     path: str
     summary: str
+    classification: FileClassification = "utility"
     keywords: list[str] = []                         # AI-extracted technical keywords
     function_summaries: list[RepoFunctionSummary] = []
 

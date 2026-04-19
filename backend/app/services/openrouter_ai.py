@@ -13,9 +13,32 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__, level=settings.log_level)
 
+FILE_CLASSIFICATIONS: tuple[str, ...] = (
+	"config",
+	"business_logic",
+	"api",
+	"data_access",
+	"middleware",
+	"ui",
+	"test",
+	"utility",
+	"entry_point",
+	"integration",
+	"background_jobs",
+)
+FILE_CLASSIFICATIONS_SET = set(FILE_CLASSIFICATIONS)
+DEFAULT_FILE_CLASSIFICATION = "utility"
+
 
 class OpenRouterError(RuntimeError):
 	pass
+
+
+def _normalize_classification(raw_value: Any) -> str:
+	value = str(raw_value or "").strip().lower().replace("-", "_").replace(" ", "_")
+	if value in FILE_CLASSIFICATIONS_SET:
+		return value
+	return DEFAULT_FILE_CLASSIFICATION
 
 
 def _extract_json_payload(text: str) -> dict[str, Any]:
@@ -341,18 +364,18 @@ async def generate_file_summaries_from_disk(
 	# + prompt overhead ≈ 1 200 tok/batch → 5 batches/min → 12 s delay.
 	max_content_chars: int = 600,
 	batch_delay_seconds: int = 12,
-) -> dict[str, str]:
+) -> dict[str, dict[str, Any]]:
 	"""Read actual source-file content from disk and generate AI summaries.
 
 	Files are sent to the AI **sequentially** in batches of ``chunk_size``
 	(default 6).  A ``batch_delay_seconds`` pause is inserted between every
 	two consecutive batches to avoid hitting Groq's tokens-per-minute rate
 	limit.  Each file is summarised individually; the combined result is a
-	``{path: summary}`` mapping.
+	``{path: {summary, classification, keywords, function_summaries}}`` mapping.
 
 	``clone_path`` must still exist on disk when this function is called.
 	``max_content_chars`` limits how much of each file is forwarded to the AI
-	to keep prompt size manageable (default: first 2 000 characters).
+	to keep prompt size manageable (default: first 600 characters).
 	"""
 	if not nodes:
 		logger.info("[file-summaries-disk] No nodes — skipping AI calls")
@@ -431,7 +454,7 @@ async def generate_file_summaries_from_disk(
 		batch_delay_seconds,
 	)
 
-	summaries_by_path: dict[str, str] = {}
+	summaries_by_path: dict[str, dict[str, Any]] = {}
 
 	for batch_num, batch_start in enumerate(range(0, total_files, chunk_size), start=1):
 		chunk = file_items[batch_start : batch_start + chunk_size]
@@ -461,12 +484,15 @@ async def generate_file_summaries_from_disk(
 			"repo_url": repo_url,
 			"task": (
 				"For each file: (1) write a file-level summary, "
-				"(2) extract technical keywords, "
-				"(3) write a brief summary for every function/class listed in 'functions_to_summarize'."
+				"(2) assign one classification label, "
+				"(3) extract technical keywords, "
+				"(4) write a brief summary for every function/class listed in 'functions_to_summarize'."
 			),
 			"rules": [
 				"Read the 'content' field for each file to understand what it actually does.",
 				"Each file summary must be exactly 5-6 short lines separated by \\n.",
+				f"classification must be exactly one value from: {', '.join(FILE_CLASSIFICATIONS)}.",
+				"classification must be a single string, not an array and not null.",
 				"Each function summary must be 2-3 sentences (max 30 words).",
 				"Keywords: extract 3-8 technical terms — frameworks, libraries, patterns, "
 				"protocols, or domain concepts (e.g. JWT, Redis, REST, pagination, middleware).",
@@ -479,6 +505,7 @@ async def generate_file_summaries_from_disk(
 					{
 						"path": "<exact path from allowed_paths>",
 						"file_summary": "<5-6 lines separated by \\n>",
+						"classification": "<one allowed classification label>",
 						"keywords": ["<keyword1>", "<keyword2>"],
 						"function_summaries": [
 							{"name": "<function name>", "summary": "<2-3 sentences>"}
@@ -516,8 +543,9 @@ async def generate_file_summaries_from_disk(
 				"content": (
 					"You are a senior software architect. For each file, produce: "
 					"(1) a file-level summary, "
-					"(2) a 'keywords' array of 3-8 technical terms from the file, "
-					"(3) a brief summary for every function/class in 'functions_to_summarize'. "
+					"(2) exactly one classification label from the allowed list, "
+					"(3) a 'keywords' array of 3-8 technical terms from the file, "
+					"(4) a brief summary for every function/class in 'functions_to_summarize'. "
 					"Return strict JSON with key 'summaries' — no prose, no markdown fences."
 				),
 			},
@@ -554,6 +582,7 @@ async def generate_file_summaries_from_disk(
 			path = str(item.get("path", "")).strip()
 			# Accept either "file_summary" (new) or "summary" (old fallback)
 			file_summary = str(item.get("file_summary") or item.get("summary", "")).strip()
+			classification = _normalize_classification(item.get("classification"))
 			if not path or not file_summary:
 				continue
 			if path not in allowed_set:
@@ -586,6 +615,7 @@ async def generate_file_summaries_from_disk(
 
 			summaries_by_path[path] = {
 				"summary": file_summary,
+				"classification": classification,
 				"keywords": keywords,
 				"function_summaries": func_summaries,
 			}
