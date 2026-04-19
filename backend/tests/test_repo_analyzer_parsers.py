@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.services.repo_analyzer import (
+    _collect_source_files,
     _build_go_directory_index,
     _build_python_module_index,
     _build_rust_module_index,
@@ -147,3 +148,24 @@ def test_css_reference_extraction() -> None:
     )
 
     assert targets == {"web/styles/base.css", "web/assets/bg.png"}
+
+
+def test_collect_source_files_includes_config_and_skips_readme(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.ts").write_text("export const ok = true", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name":"demo"}', encoding="utf-8")
+    (tmp_path / "docker-compose.yml").write_text("services: {}", encoding="utf-8")
+    (tmp_path / "Dockerfile").write_text("FROM node:20", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("API_URL=https://example.com", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# ignored", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("ignored", encoding="utf-8")
+
+    files = _collect_source_files(tmp_path)
+
+    assert "src/main.ts" in files
+    assert "package.json" in files
+    assert "docker-compose.yml" in files
+    assert "Dockerfile" in files
+    assert ".env.example" in files
+    assert "README.md" not in files
+    assert "notes.txt" not in files

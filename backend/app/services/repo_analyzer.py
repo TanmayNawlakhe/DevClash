@@ -16,6 +16,27 @@ GO_EXTENSIONS = (".go",)
 RUST_EXTENSIONS = (".rs",)
 HTML_EXTENSIONS = (".html", ".htm")
 CSS_EXTENSIONS = (".css",)
+CONFIG_EXTENSIONS = (
+    ".json",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env",
+    ".properties",
+)
+FUNCTION_EXTRACT_EXTENSIONS = (
+    *PYTHON_EXTENSIONS,
+    *JS_TS_EXTENSIONS,
+    *C_CPP_EXTENSIONS,
+    *GO_EXTENSIONS,
+    *RUST_EXTENSIONS,
+)
+SPECIAL_SOURCE_FILENAMES = {
+    "dockerfile",
+}
 SUPPORTED_EXTENSIONS = (
     *PYTHON_EXTENSIONS,
     *JS_TS_EXTENSIONS,
@@ -24,6 +45,7 @@ SUPPORTED_EXTENSIONS = (
     *RUST_EXTENSIONS,
     *HTML_EXTENSIONS,
     *CSS_EXTENSIONS,
+    *CONFIG_EXTENSIONS,
 )
 SKIP_DIRS = {
     ".git",
@@ -204,7 +226,11 @@ async def analyze_repository_graph(
         line_counts_by_file: dict[str, int] = {}
         for rel_path in files:
             abs_path = repo_clone_path / Path(rel_path)
-            functions_by_file[rel_path] = _extract_functions_from_file(abs_path, rel_path)
+            suffix = PurePosixPath(rel_path).suffix.lower()
+            if suffix in FUNCTION_EXTRACT_EXTENSIONS:
+                functions_by_file[rel_path] = _extract_functions_from_file(abs_path, rel_path)
+            else:
+                functions_by_file[rel_path] = []
             line_counts_by_file[rel_path] = _count_lines_from_file(abs_path)
 
         await _emit_progress(progress_callback, "building_graph", 95)
@@ -282,11 +308,12 @@ def _collect_source_files(base_path: Path) -> list[str]:
         ]
 
         for filename in files:
-            if filename.startswith("."):
+            filename_lower = filename.lower()
+            is_allowed_dotfile = filename_lower == ".env" or filename_lower.startswith(".env.")
+            if filename_lower.startswith(".") and not is_allowed_dotfile:
                 continue
 
-            suffix = Path(filename).suffix.lower()
-            if suffix not in SUPPORTED_EXTENSIONS:
+            if not _is_supported_source_filename(filename_lower):
                 continue
 
             abs_path = Path(root) / filename
@@ -295,6 +322,17 @@ def _collect_source_files(base_path: Path) -> list[str]:
 
     output.sort()
     return output
+
+
+def _is_supported_source_filename(filename_lower: str) -> bool:
+    if filename_lower in SPECIAL_SOURCE_FILENAMES:
+        return True
+
+    if filename_lower == ".env" or filename_lower.startswith(".env."):
+        return True
+
+    suffix = Path(filename_lower).suffix.lower()
+    return suffix in SUPPORTED_EXTENSIONS
 
 
 def _build_python_module_index(files: list[str]) -> tuple[dict[str, str], dict[str, str]]:
@@ -923,6 +961,12 @@ def _build_graph_payload(
 
 
 def _language_from_path(path: str) -> str:
+    filename = PurePosixPath(path).name.lower()
+    if filename == "dockerfile":
+        return "dockerfile"
+    if filename == ".env" or filename.startswith(".env."):
+        return "env"
+
     suffix = PurePosixPath(path).suffix.lower()
     if suffix in PYTHON_EXTENSIONS:
         return "python"
@@ -940,6 +984,14 @@ def _language_from_path(path: str) -> str:
         return "html"
     if suffix in CSS_EXTENSIONS:
         return "css"
+    if suffix == ".json":
+        return "json"
+    if suffix in {".yml", ".yaml"}:
+        return "yaml"
+    if suffix == ".toml":
+        return "toml"
+    if suffix in {".ini", ".cfg", ".conf", ".properties"}:
+        return "config"
     return "unknown"
 
 
