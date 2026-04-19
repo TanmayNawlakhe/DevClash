@@ -7,7 +7,6 @@ import { GraphCanvas } from '../../components/features/graph/GraphCanvas'
 import { AnalysisProgress } from '../../components/features/repo/AnalysisProgress'
 import { FileDetailPanel } from '../../components/features/panels/FileDetailPanel'
 import { OnboardingPathPanel } from '../../components/features/panels/OnboardingPathPanel'
-import { OrphanPanel } from '../../components/features/panels/OrphanPanel'
 import { PrioritySidebar } from '../../components/features/panels/PrioritySidebar'
 import { RepoUrlInput } from '../../components/features/repo/RepoUrlInput'
 import { EmptyState } from '../../components/ui/EmptyState'
@@ -24,6 +23,7 @@ import { usePriorityStore } from '../../store/priorityStore'
 import { useRepoStore } from '../../store/repoStore'
 import { useUIStore } from '../../store/uiStore'
 import { cn, truncatePath } from '../../lib/utils'
+import type { FileNode } from '../../types'
 
 export function RepoAnalysis() {
   const { repoId } = useParams()
@@ -291,6 +291,16 @@ function LeftAnalysisPanel({ onClose }: { onClose: () => void }) {
     )
   }, [debounced, graph])
 
+  const utilityFiles = useMemo(
+    () => files.filter((file) => file.layer === 'utility' || file.layer === 'util'),
+    [files],
+  )
+
+  const configFiles = useMemo(
+    () => files.filter((file) => file.layer === 'config'),
+    [files],
+  )
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header with close button */}
@@ -321,10 +331,7 @@ function LeftAnalysisPanel({ onClose }: { onClose: () => void }) {
                     {files.map((file) => (
                       <button
                         key={file.id}
-                        className={cn(
-                          'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent',
-                          file.isOrphan && 'border border-dashed border-destructive/50',
-                        )}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
                         onClick={() => {
                           setSelectedNode(file.id)
                           setActivePanel('file')
@@ -341,10 +348,67 @@ function LeftAnalysisPanel({ onClose }: { onClose: () => void }) {
             },
             { value: 'onboarding', label: 'Guide', content: <OnboardingPathPanel /> },
             { value: 'priority', label: 'Priority', content: <PrioritySidebar /> },
-            { value: 'dead', label: 'Dead', content: <OrphanPanel /> },
+            {
+              value: 'utility',
+              label: 'Utility',
+              content: (
+                <LayerFilesList
+                  files={utilityFiles}
+                  emptyMessage="No utility files match the current filter."
+                  onSelect={(fileId) => {
+                    setSelectedNode(fileId)
+                    setActivePanel('file')
+                  }}
+                />
+              ),
+            },
+            {
+              value: 'config',
+              label: 'Config',
+              content: (
+                <LayerFilesList
+                  files={configFiles}
+                  emptyMessage="No config files match the current filter."
+                  onSelect={(fileId) => {
+                    setSelectedNode(fileId)
+                    setActivePanel('file')
+                  }}
+                />
+              ),
+            },
           ]}
         />
       </div>
+    </div>
+  )
+}
+
+function LayerFilesList({
+  files,
+  emptyMessage,
+  onSelect,
+}: {
+  files: FileNode[]
+  emptyMessage: string
+  onSelect: (fileId: string) => void
+}) {
+  if (!files.length) {
+    return <p className="text-sm text-muted-foreground">{emptyMessage}</p>
+  }
+
+  return (
+    <div className="space-y-1">
+      {files.map((file) => (
+        <button
+          key={file.id}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+          onClick={() => onSelect(file.id)}
+        >
+          <FileCode2 className="size-4 shrink-0 text-primary" />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs">{truncatePath(file.path, 34)}</span>
+          <LayerBadge layer={file.layer} className="hidden xl:inline-flex" />
+        </button>
+      ))}
     </div>
   )
 }
