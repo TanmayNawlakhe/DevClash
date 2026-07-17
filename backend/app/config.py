@@ -14,6 +14,20 @@ class Settings:
     mongodb_db_name: str = os.getenv("MONGODB_DB_NAME", "repomap")
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
+
+    # ── Neo4j (graph store) ───────────────────────────────────────────────────
+    # Feature-flagged. When disabled or unreachable, the app falls back to the
+    # in-memory / MongoDB graph path so nothing breaks.
+    neo4j_enabled: bool = os.getenv("NEO4J_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+    neo4j_uri: str = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+    neo4j_user: str = os.getenv("NEO4J_USER", "neo4j")
+    neo4j_password: str = os.getenv("NEO4J_PASSWORD", "")
+    neo4j_database: str = os.getenv("NEO4J_DATABASE", "neo4j")
+    # Vector index dimension = MiniLM summary embedding = 384. Fixed in code (not
+    # env) so a stale NEO4J_VECTOR_DIM can't desync the index from the stored
+    # vectors. CodeBERT (768) was rejected: file cosines cluster at ~0.97, making
+    # poor dense seeds; the summary embedding spreads widely and discriminates.
+    neo4j_vector_dim: int = 384
     repo_clone_base_dir: str = os.getenv("REPO_CLONE_BASE_DIR", ".repo_cache")
     clone_timeout_seconds: int = int(os.getenv("CLONE_TIMEOUT_SECONDS", "120"))
     analysis_queue_key: str = os.getenv("ANALYSIS_QUEUE_KEY", "analysis_jobs")

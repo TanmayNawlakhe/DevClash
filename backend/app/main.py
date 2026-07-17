@@ -12,6 +12,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from app.db.mongodb import close_mongodb_connection, connect_to_mongodb
+from app.db.neo4j_client import close_neo4j, connect_to_neo4j
 from app.db.redis_client import close_redis_connection, connect_to_redis
 from app.utils.logger import get_logger
 from app.config import settings
@@ -26,11 +27,13 @@ async def lifespan(_: FastAPI):
     await connect_to_mongodb()
     await ensure_repo_indexes()
     await connect_to_redis()
+    await connect_to_neo4j()  # no-op unless NEO4J_ENABLED=true and reachable
     logger.info("Application startup complete")
 
     try:
         yield
     finally:
+        await close_neo4j()
         await close_redis_connection()
         await close_mongodb_connection()
         logger.info("Application shutdown complete")

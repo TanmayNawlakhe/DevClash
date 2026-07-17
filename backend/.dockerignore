@@ -1,0 +1,13 @@
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.repo_cache
+.env
+.git
+.gitignore
+knowledge_forge_chroma
+tests
+scripts/__pycache__

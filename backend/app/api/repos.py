@@ -26,6 +26,7 @@ from app.schemas.repo import (
     RepoSubmitResponse,
     RepoSummariesResponse,
 )
+from app.schemas.search import SearchRequest
 from app.services.keyword_references import get_or_fetch_keyword_reference_urls
 from app.services.repo_analyzer import is_supported_github_url, normalize_github_url
 from app.services.repo_job_processor import enqueue_repo_job, remove_repo_job_from_queue
@@ -364,7 +365,15 @@ async def get_repo_graph(
     )
 
     meta = dict(graph_doc.get("meta", {}))
+
+    # Function-level call graph, kept consistent with any node filtering.
+    call_graph = graph_doc.get("callGraph", []) or []
     if language or path_prefix:
+        allowed = {node.get("id") for node in filtered_nodes}
+        call_graph = [
+            edge for edge in call_graph
+            if edge.get("caller_file") in allowed and edge.get("callee_file") in allowed
+        ]
         meta["filtered"] = True
         meta["originalNodeCount"] = len(nodes)
         meta["originalEdgeCount"] = len(edges)
@@ -376,7 +385,67 @@ async def get_repo_graph(
         nodes=filtered_nodes,
         edges=filtered_edges,
         meta=meta,
+        call_graph=call_graph,
     )
+
+
+@router.get("/{repo_id}/insights")
+async def get_repo_insights(repo_id: str) -> dict:
+    """Graph-derived insights from Neo4j GDS.
+
+    ``communities`` — subsystems discovered by Louvain (topology-based).
+    ``important_files`` — files ranked by PageRank (structural importance).
+    Returns 409 when Neo4j is disabled/unavailable.
+    """
+    _to_object_id(repo_id)
+    from app.db.neo4j_client import is_available
+    from app.services.neo4j_algorithms import communities, top_by_pagerank
+
+    if not settings.neo4j_enabled or not is_available():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Graph insights require Neo4j (NEO4J_ENABLED=true and reachable).",
+        )
+    return {
+        "repo_id": repo_id,
+        "communities": await communities(repo_id),
+        "important_files": await top_by_pagerank(repo_id, 15),
+    }
+
+
+@router.post("/{repo_id}/communities/summarize")
+async def summarize_repo_communities(repo_id: str) -> dict:
+    """Generate + store LLM summaries for each detected community (subsystem).
+
+    Runs automatically after analysis; this re-runs it on demand. 409 if Neo4j
+    is unavailable.
+    """
+    _to_object_id(repo_id)
+    from app.db.neo4j_client import is_available
+    from app.services.graphrag_global import summarize_communities
+
+    if not settings.neo4j_enabled or not is_available():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Community summaries require Neo4j (NEO4J_ENABLED=true and reachable).",
+        )
+    return await summarize_communities(repo_id)
+
+
+@router.post("/{repo_id}/global-search")
+async def global_search_repo(repo_id: str, request: SearchRequest) -> dict:
+    """GraphRAG global search — answer whole-repo/architectural questions by
+    map-reduce over community summaries (vs. local file retrieval in /search)."""
+    _to_object_id(repo_id)
+    from app.db.neo4j_client import is_available
+    from app.services.graphrag_global import global_search
+
+    if not settings.neo4j_enabled or not is_available():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Global search requires Neo4j (NEO4J_ENABLED=true and reachable).",
+        )
+    return await global_search(repo_id, request.query)
 
 
 @router.get("/{repo_id}/summaries", response_model=RepoSummariesResponse)

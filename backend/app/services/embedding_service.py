@@ -289,6 +289,23 @@ async def run_embedding_job(repo_object_id: ObjectId) -> None:
             len(file_embeddings), elapsed,
         )
 
+        # ── Mirror the graph into Neo4j + run GDS (no-op if Neo4j disabled) ───
+        try:
+            from app.services.neo4j_sync import sync_repo
+            result = await sync_repo(repo_object_id)
+            if result.get("synced"):
+                logger.info("[embed] Neo4j sync: %s", result)
+                from app.services.neo4j_algorithms import run_graph_algorithms
+                alg = await run_graph_algorithms(repo_object_id)
+                if alg.get("ran"):
+                    logger.info("[embed] GDS communities + PageRank: %s", alg)
+                    from app.services.graphrag_global import summarize_communities
+                    summ = await summarize_communities(repo_object_id)
+                    if summ.get("summarized"):
+                        logger.info("[embed] GraphRAG community summaries: %d", summ.get("communities"))
+        except Exception as exc:
+            logger.warning("[embed] Neo4j sync/GDS skipped (%s)", exc)
+
         logger.info("[embed] Clone preserved after embedding: %s", clone_path)
 
     except Exception as exc:

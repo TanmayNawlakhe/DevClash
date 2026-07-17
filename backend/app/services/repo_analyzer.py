@@ -61,13 +61,9 @@ SKIP_DIRS = {
     "coverage",
 }
 
-IMPORT_FROM_RE = re.compile(r"^\s*import\s+.+?\s+from\s+['\"]([^'\"]+)['\"]")
-IMPORT_SIDE_EFFECT_RE = re.compile(r"^\s*import\s+['\"]([^'\"]+)['\"]")
-EXPORT_FROM_RE = re.compile(r"^\s*export\s+.+?\s+from\s+['\"]([^'\"]+)['\"]")
-REQUIRE_RE = re.compile(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)")
-DYNAMIC_IMPORT_RE = re.compile(r"import\(\s*['\"]([^'\"]+)['\"]\s*\)")
-
-C_INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^\">]+)[\">]")
+# JS/TS/TSX, C/C++, HTML and CSS dependency refs are now extracted via
+# Tree-sitter AST (tree_sitter_extractor: extract_import_specifiers /
+# extract_static_refs), not regex. Go and Rust remain regex-based below.
 
 GO_SINGLE_IMPORT_RE = re.compile(
     r"^\s*import\s+(?:[A-Za-z_][A-Za-z0-9_]*\s+|\.\s+|_\s+)?[\"`]([^\"`]+)[\"`]"
@@ -79,16 +75,6 @@ GO_IMPORT_BLOCK_ITEM_RE = re.compile(
 
 RUST_MOD_RE = re.compile(r"^\s*(?:pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
 RUST_USE_RE = re.compile(r"^\s*(?:pub\s+)?use\s+([^;]+);")
-
-HTML_SCRIPT_SRC_RE = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
-HTML_LINK_HREF_RE = re.compile(r"<link[^>]+href=[\"']([^\"']+)[\"']", re.IGNORECASE)
-HTML_ASSET_SRC_RE = re.compile(
-    r"<(?:img|source|video|audio|iframe)[^>]+src=[\"']([^\"']+)[\"']",
-    re.IGNORECASE,
-)
-
-CSS_IMPORT_RE = re.compile(r"@import\s+(?:url\()?\s*[\"']?([^\"')\s;]+)", re.IGNORECASE)
-CSS_URL_RE = re.compile(r"url\(\s*[\"']?([^\"')]+)[\"']?\s*\)", re.IGNORECASE)
 
 
 # Function / class extraction is handled by tree_sitter_extractor.py
@@ -221,17 +207,26 @@ async def analyze_repository_graph(
 
         await _emit_progress(progress_callback, "extracting_functions", 93)
 
-        # Second pass: extract function/class names while the repo is still on disk.
+        # Second pass: extract function/class names + call sites (AST) while the
+        # repo is still on disk.
         functions_by_file: dict[str, list[dict]] = {}
+        calls_by_file: dict[str, list[dict]] = {}
         line_counts_by_file: dict[str, int] = {}
         for rel_path in files:
             abs_path = repo_clone_path / Path(rel_path)
             suffix = PurePosixPath(rel_path).suffix.lower()
             if suffix in FUNCTION_EXTRACT_EXTENSIONS:
                 functions_by_file[rel_path] = _extract_functions_from_file(abs_path, rel_path)
+                calls_by_file[rel_path] = _extract_call_edges_from_file(abs_path, rel_path)
             else:
                 functions_by_file[rel_path] = []
+                calls_by_file[rel_path] = []
             line_counts_by_file[rel_path] = _count_lines_from_file(abs_path)
+
+        # Resolve the call graph: unresolved call sites → defined functions.
+        call_edges_fn, call_file_edges = _resolve_call_graph(
+            functions_by_file, calls_by_file, edges
+        )
 
         await _emit_progress(progress_callback, "building_graph", 95)
 
@@ -240,6 +235,8 @@ async def analyze_repository_graph(
             edges,
             functions_by_file,
             line_counts_by_file,
+            call_file_edges=call_file_edges,
+            call_edges_fn=call_edges_fn,
         )
         await _emit_progress(progress_callback, "complete", 100)
         # Return the clone path so the caller can read file content for AI
@@ -511,38 +508,28 @@ def _extract_js_ts_targets(
     source_rel_path: str,
     all_files: set[str],
 ) -> set[str]:
+    """AST-based JS/TS/TSX import extraction (Tree-sitter).
+
+    Replaces the previous line-based regex: multi-line imports are handled
+    correctly, and specifiers inside comments or string literals no longer
+    produce phantom edges. Only relative specifiers become graph edges
+    (bare specifiers are third-party npm packages).
+    """
     try:
-        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        source = file_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return set()
 
+    from app.services.tree_sitter_extractor import extract_import_specifiers, lang_from_path
+
+    lang = lang_from_path(source_rel_path) or "javascript"
     targets: set[str] = set()
-
-    for line in lines:
-        candidates: list[str] = []
-
-        match = IMPORT_FROM_RE.search(line)
-        if match:
-            candidates.append(match.group(1))
-
-        match = IMPORT_SIDE_EFFECT_RE.search(line)
-        if match:
-            candidates.append(match.group(1))
-
-        match = EXPORT_FROM_RE.search(line)
-        if match:
-            candidates.append(match.group(1))
-
-        candidates.extend(REQUIRE_RE.findall(line))
-        candidates.extend(DYNAMIC_IMPORT_RE.findall(line))
-
-        for import_path in candidates:
-            if not import_path.startswith("."):
-                continue
-
-            resolved = _resolve_relative_import(source_rel_path, import_path, all_files)
-            if resolved:
-                targets.add(resolved)
+    for import_path in extract_import_specifiers(source, lang):
+        if not import_path.startswith("."):
+            continue
+        resolved = _resolve_relative_import(source_rel_path, import_path, all_files)
+        if resolved:
+            targets.add(resolved)
 
     return targets
 
@@ -552,18 +539,17 @@ def _extract_c_cpp_targets(
     source_rel_path: str,
     all_files: set[str],
 ) -> set[str]:
+    """AST-based C/C++ ``#include`` extraction (Tree-sitter)."""
     try:
-        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        source = file_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return set()
 
-    targets: set[str] = set()
-    for line in lines:
-        match = C_INCLUDE_RE.search(line)
-        if not match:
-            continue
+    from app.services.tree_sitter_extractor import extract_static_refs, lang_from_path
 
-        include_path = match.group(1)
+    lang = lang_from_path(source_rel_path) or "c"
+    targets: set[str] = set()
+    for include_path in extract_static_refs(source, lang):
         resolved = _resolve_c_cpp_include(source_rel_path, include_path, all_files)
         if resolved:
             targets.add(resolved)
@@ -767,13 +753,10 @@ def _extract_html_targets(
     except Exception:
         return set()
 
-    raw_references: list[str] = []
-    raw_references.extend(HTML_SCRIPT_SRC_RE.findall(content))
-    raw_references.extend(HTML_LINK_HREF_RE.findall(content))
-    raw_references.extend(HTML_ASSET_SRC_RE.findall(content))
+    from app.services.tree_sitter_extractor import extract_static_refs
 
     targets: set[str] = set()
-    for reference in raw_references:
+    for reference in extract_static_refs(content, "html"):
         resolved = _resolve_asset_reference(source_rel_path, reference, all_files)
         if resolved:
             targets.add(resolved)
@@ -791,12 +774,10 @@ def _extract_css_targets(
     except Exception:
         return set()
 
-    references: list[str] = []
-    references.extend(CSS_IMPORT_RE.findall(content))
-    references.extend(CSS_URL_RE.findall(content))
+    from app.services.tree_sitter_extractor import extract_static_refs
 
     targets: set[str] = set()
-    for reference in references:
+    for reference in extract_static_refs(content, "css"):
         resolved = _resolve_asset_reference(source_rel_path, reference, all_files)
         if resolved:
             targets.add(resolved)
@@ -882,6 +863,94 @@ def _extract_functions_from_file(file_path, rel_path: str) -> list[dict]:
     return _ts_extract(file_path, rel_path)
 
 
+def _extract_call_edges_from_file(file_path, rel_path: str) -> list[dict]:
+    """Delegate to the tree-sitter call-site extractor (intra-file, unresolved).
+
+    Each dict: {caller, caller_line, callee, line}.
+    """
+    from app.services.tree_sitter_extractor import extract_call_edges_from_file as _ts_calls
+    return _ts_calls(file_path, rel_path)
+
+
+def _resolve_call_graph(
+    functions_by_file: dict[str, list[dict]],
+    calls_by_file: dict[str, list[dict]],
+    import_edges: set[tuple[str, str]],
+) -> tuple[list[dict], set[tuple[str, str]]]:
+    """Resolve unresolved call sites to defined functions across the repo.
+
+    A call ``foo()`` inside file F is linked to a *defined* function named
+    ``foo`` using a name index with import-aware disambiguation:
+
+        1. Same-file definition wins (the common case).
+        2. Otherwise, if exactly one file in the repo defines that name, link it.
+        3. Otherwise, link only definitions in files that F actually imports.
+        4. Still ambiguous (name defined in several unrelated files) → skip,
+           to avoid spraying false edges.
+
+    Calls to names with no definition in the repo (library/builtins) are
+    dropped — the name index simply doesn't contain them.
+
+    Returns:
+        call_edges_fn   — function-level edges
+                          {caller_file, caller, callee_file, callee}
+        call_file_edges — set of (caller_file, callee_file) for cross-file calls
+    """
+    defs_by_name: dict[str, list[str]] = {}
+    for file, funcs in functions_by_file.items():
+        for fn in funcs:
+            name = fn.get("name")
+            if name and name != "<anonymous>":
+                defs_by_name.setdefault(name, [])
+                if file not in defs_by_name[name]:
+                    defs_by_name[name].append(file)
+
+    imports_of: dict[str, set[str]] = {}
+    for src, tgt in import_edges:
+        imports_of.setdefault(src, set()).add(tgt)
+
+    call_edges_fn: list[dict] = []
+    call_file_edges: set[tuple[str, str]] = set()
+    seen_fn: set[tuple[str, str, str]] = set()
+
+    for file, calls in calls_by_file.items():
+        for call in calls:
+            callee = call.get("callee")
+            caller = call.get("caller", "<module>")
+            if not callee:
+                continue
+            candidate_files = defs_by_name.get(callee)
+            if not candidate_files:
+                continue  # external / library / builtin
+
+            if file in candidate_files:
+                chosen = [file]                              # 1. local
+            elif len(candidate_files) == 1:
+                chosen = [candidate_files[0]]                # 2. unique repo-wide
+            else:
+                imported = imports_of.get(file, set())
+                chosen = [f for f in candidate_files if f in imported]  # 3. import-linked
+                # 4. otherwise chosen stays empty → skip ambiguous
+
+            for callee_file in chosen:
+                if callee_file == file and caller == callee:
+                    continue  # skip trivial self-reference
+                key = (file, caller, f"{callee_file}::{callee}")
+                if key in seen_fn:
+                    continue
+                seen_fn.add(key)
+                call_edges_fn.append({
+                    "caller_file": file,
+                    "caller":      caller,
+                    "callee_file": callee_file,
+                    "callee":      callee,
+                })
+                if callee_file != file:
+                    call_file_edges.add((file, callee_file))
+
+    return call_edges_fn, call_file_edges
+
+
 def _count_lines_from_file(file_path: Path) -> int:
     try:
         content = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -898,13 +967,29 @@ def _build_graph_payload(
     edges: set[tuple[str, str]],
     functions_by_file: dict[str, list[dict]] | None = None,
     line_counts_by_file: dict[str, int] | None = None,
+    call_file_edges: set[tuple[str, str]] | None = None,
+    call_edges_fn: list[dict] | None = None,
 ) -> dict:
+    call_file_edges = call_file_edges or set()
+    call_edges_fn = call_edges_fn or []
+
     in_degree = {path: 0 for path in files}
     out_degree = {path: 0 for path in files}
 
     for source, target in edges:
         out_degree[source] += 1
         in_degree[target] += 1
+
+    # Per-file call fan-out / fan-in (cross-file function calls).
+    calls_out = {path: 0 for path in files}
+    calls_in = {path: 0 for path in files}
+    for edge in call_edges_fn:
+        cf, tf = edge["caller_file"], edge["callee_file"]
+        if cf != tf:
+            if cf in calls_out:
+                calls_out[cf] += 1
+            if tf in calls_in:
+                calls_in[tf] += 1
 
     nodes: list[dict] = []
 
@@ -925,6 +1010,8 @@ def _build_graph_payload(
                 "isOrphan": in_degree[path] == 0 and out_degree[path] == 0,
                 "inDegree": in_degree[path],
                 "outDegree": out_degree[path],
+                "callsOut": calls_out[path],
+                "callsIn": calls_in[path],
                 "lineCount": line_count,
                 "functions": funcs,
                 "functionCount": len(funcs),
@@ -932,16 +1019,32 @@ def _build_graph_payload(
         }
         nodes.append(node)
 
+    import_pairs = set(edges)
     edge_list = sorted(edges)
     react_flow_edges = [
         {
             "id": f"e-{idx}",
             "source": source,
             "target": target,
-            "data": {"importType": "direct"},
+            "data": {"importType": "direct", "kind": "import"},
         }
         for idx, (source, target) in enumerate(edge_list)
     ]
+
+    # Cross-file call edges the import graph didn't already capture. These are
+    # merged into the same edge list so graph-RAG traversal and the canvas both
+    # benefit (e.g. dynamic dispatch or re-exports that import parsing misses).
+    call_only = sorted(
+        (s, t) for (s, t) in call_file_edges
+        if s != t and (s, t) not in import_pairs
+    )
+    for idx, (source, target) in enumerate(call_only):
+        react_flow_edges.append({
+            "id": f"c-{idx}",
+            "source": source,
+            "target": target,
+            "data": {"kind": "call"},
+        })
 
     entry_points = [node["id"] for node in nodes if node["data"]["isEntry"]]
     orphan_nodes = [node["id"] for node in nodes if node["data"]["isOrphan"]]
@@ -949,6 +1052,9 @@ def _build_graph_payload(
     meta = {
         "nodeCount": len(nodes),
         "edgeCount": len(react_flow_edges),
+        "importEdgeCount": len(edge_list),
+        "callEdgeCount": len(call_only),
+        "callGraphEdgeCount": len(call_edges_fn),
         "entryPoints": entry_points,
         "orphans": orphan_nodes,
     }
@@ -956,6 +1062,8 @@ def _build_graph_payload(
     return {
         "nodes": nodes,
         "edges": react_flow_edges,
+        # Function-level call graph (caller_file/caller -> callee_file/callee).
+        "callGraph": call_edges_fn,
         "meta": meta,
     }
 

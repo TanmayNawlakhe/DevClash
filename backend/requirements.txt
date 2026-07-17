@@ -2,21 +2,28 @@ fastapi==0.115.12
 uvicorn==0.34.2
 motor==3.7.0
 redis==5.2.1
+neo4j==5.26.0
 python-dotenv==1.0.1
 pytest==8.3.5
 tavily-python==0.5.2
 
 pydantic
 
-# ── Tree-sitter: AST-based function extraction ─────────────────────────────────
-tree-sitter
-tree-sitter-python
-tree-sitter-javascript
-tree-sitter-typescript
-tree-sitter-go
-tree-sitter-rust
-tree-sitter-c
-tree-sitter-cpp
+# ── Tree-sitter: AST function extraction, call graph & semantic chunking ───────
+# Versions are PINNED as a coherent set. The core and the grammar packages share
+# a native ABI; mixing an unpinned core (e.g. 0.26) with older grammars can
+# SEGFAULT the parser at runtime. This exact set is verified to parse all
+# supported languages (incl. TypeScript/TSX) without crashing.
+tree-sitter==0.25.0
+tree-sitter-python==0.25.0
+tree-sitter-javascript==0.25.0
+tree-sitter-typescript==0.23.2
+tree-sitter-go==0.25.0
+tree-sitter-rust==0.24.2
+tree-sitter-c==0.24.2
+tree-sitter-cpp==0.23.4
+tree-sitter-html==0.23.2
+tree-sitter-css==0.25.0
 
 # ── Embeddings: CodeBERT + MiniLM ─────────────────────────────────────────────
 # Install torch CPU-only to keep download size small (~200MB vs ~3GB for CUDA)

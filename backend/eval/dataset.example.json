@@ -1,0 +1,28 @@
+[
+  {
+    "repo_id": "PASTE_REPO_ID_HERE",
+    "query": "where is authentication handled?",
+    "expected": [
+      "app/api/auth.py",
+      "app/services/auth_service.py",
+      "app/middleware/auth_guard.py"
+    ]
+  },
+  {
+    "repo_id": "PASTE_REPO_ID_HERE",
+    "query": "how does a repo get analyzed end to end?",
+    "expected": [
+      "app/services/repo_job_processor.py",
+      "app/services/repo_analyzer.py",
+      "app/services/embedding_service.py"
+    ]
+  },
+  {
+    "repo_id": "PASTE_REPO_ID_HERE",
+    "query": "how are dependency graph edges built from imports?",
+    "expected": [
+      "app/services/repo_analyzer.py",
+      "app/services/tree_sitter_extractor.py"
+    ]
+  }
+]

@@ -1,4 +1,17 @@
+# GitSuri stack.
+#
+# Profiles keep the default `up` minimal and non-disruptive:
+#
+#   docker-compose up -d                          # infra: redis + neo4j  (always)
+#   docker-compose --profile local-db up -d       # + local MongoDB + mongo-express
+#   docker-compose --profile app up -d --build     # + api + worker + frontend
+#   docker-compose --profile app --profile local-db up -d --build   # everything
+#
+# Services WITHOUT a profile (redis, neo4j) always start. Everything else is
+# opt-in, so your existing Mongo Atlas / local dev flow keeps working untouched.
+
 services:
+  # ── Infrastructure (always on) ───────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: devclash-redis
@@ -14,5 +27,135 @@ services:
       timeout: 5s
       retries: 5
 
+  neo4j:
+    image: neo4j:5.26
+    container_name: devclash-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # HTTP browser UI  → http://localhost:7474
+      - "7687:7687"   # Bolt protocol    → bolt://localhost:7687
+    environment:
+      # Change the password and mirror it in backend/.env (NEO4J_PASSWORD).
+      NEO4J_AUTH: "neo4j/devclash-password"
+      # APOC utilities + Graph Data Science (Louvain, PageRank) plugins.
+      NEO4J_PLUGINS: '["apoc","graph-data-science"]'
+      NEO4J_dbms_security_procedures_unrestricted: "gds.*,apoc.*"
+      NEO4J_server_memory_heap_max__size: "1G"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  # ── Local MongoDB (opt-in; skip if you use Atlas) ────────────────────────────
+  # To use it, set in backend/.env:  MONGODB_URL=mongodb://mongo:27017 (in-container)
+  # or mongodb://localhost:27017 (app running on host).
+  mongo:
+    image: mongo:7
+    container_name: devclash-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["local-db"]
+
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: devclash-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"     # Mongo UI → http://localhost:8081
+    environment:
+      ME_CONFIG_MONGODB_URL: "mongodb://mongo:27017"
+      ME_CONFIG_BASICAUTH: "false"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    profiles: ["local-db"]
+
+  # ── Application (opt-in; needs a build) ──────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: devclash-backend
+    container_name: devclash-api
+    restart: unless-stopped
+    # API keys + MONGODB_URL come from backend/.env; the values below override
+    # host-specific URLs so containers reach each other by service name.
+    env_file: .env
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      NEO4J_ENABLED: "true"
+      NEO4J_URI: "bolt://neo4j:7687"
+      REPO_CLONE_BASE_DIR: "/data/repo_cache"
+      HF_HOME: "/data/hf_cache"
+      FRONTEND_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173"
+    ports:
+      - "8000:8000"
+    volumes:
+      - repo_cache:/data/repo_cache   # shared clone cache (api reads what worker clones)
+      - hf_cache:/data/hf_cache       # cached HuggingFace models (avoid re-download)
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    profiles: ["app"]
+
+  worker:
+    image: devclash-backend        # reuses the image built by `api`
+    container_name: devclash-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      NEO4J_ENABLED: "true"
+      NEO4J_URI: "bolt://neo4j:7687"
+      REPO_CLONE_BASE_DIR: "/data/repo_cache"
+      HF_HOME: "/data/hf_cache"
+    volumes:
+      - repo_cache:/data/repo_cache
+      - hf_cache:/data/hf_cache
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    profiles: ["app"]
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: devclash-frontend
+    container_name: devclash-frontend
+    restart: unless-stopped
+    environment:
+      # Browser-side base URL → must be the host-published API port.
+      VITE_API_URL: "http://localhost:8000"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+    profiles: ["app"]
+
 volumes:
   redis_data:
+  neo4j_data:
+  neo4j_plugins:
+  mongo_data:
+  repo_cache:
+  hf_cache:

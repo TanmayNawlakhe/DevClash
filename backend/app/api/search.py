@@ -38,6 +38,7 @@ async def search_repo(repo_id: str, request: SearchRequest) -> SearchResponse:
             top_files=request.top_files,
             top_functions=request.top_functions,
             min_score=request.min_score,
+            use_graph=request.use_graph,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))

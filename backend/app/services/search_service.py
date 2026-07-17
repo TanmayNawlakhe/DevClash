@@ -1,16 +1,23 @@
-"""Semantic search + LLM query answering over pre-computed embeddings.
+"""Hybrid (dense + graph) code retrieval and LLM query answering.
 
 Pipeline:
     1. Embed query at 768-dim (CodeBERT) + 384-dim (MiniLM).
     2. Cosine-score every file in the repo against both embeddings.
     3. Boost file score if any of its functions also matched.
-    4. Take top-N files, topologically sort by dependency edges
+    4. Graph-RAG expansion (``graph_rag.expand_with_graph``): treat the top
+       vector hits as seeds and diffuse relevance along the import graph, so
+       structurally-related files are retrieved even when their text doesn't
+       match the query. ``use_graph=False`` falls back to pure vector top-k.
+    5. Topologically sort the selected files by dependency edges
        (entry points first — gives a natural reading / flow order).
-    5. Send ranked files + dependency context to the LLM.
-    6. LLM returns: plain-English answer + Mermaid flowchart.
-    7. Validate Mermaid; fall back to deterministic diagram on failure.
+    6. Send ranked files + dependency context to the LLM.
+    7. LLM returns: plain-English answer + Mermaid flowchart.
+    8. Validate Mermaid; fall back to deterministic diagram on failure.
 
-Guard: steps 1-7 only run if embeddings are in status="complete".
+``retrieve()`` runs steps 1-5 (no LLM) and is reused by the eval harness;
+``semantic_search()`` wraps it with steps 6-8.
+
+Guard: the pipeline only runs if embeddings are in status="complete".
 """
 from __future__ import annotations
 
@@ -22,7 +29,9 @@ from typing import Any
 
 from bson import ObjectId
 
+from app.config import settings
 from app.db.mongodb import get_database
+from app.services import graph_rag
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -89,7 +98,15 @@ def _score_files_sync(
     top_files: int,
     top_functions: int,
     min_score: float,
+    score_all: bool = False,
 ) -> list[dict]:
+    """Cosine-score every file against the query.
+
+    Normal mode returns the ``top_files`` files above ``min_score`` (pure
+    vector top-k). With ``score_all=True`` the sub-threshold filter and the
+    truncation are skipped, so the full scored candidate pool is returned —
+    graph expansion needs the low-cosine files as potential neighbors.
+    """
     results: list[dict] = []
 
     for fe in file_embeddings:
@@ -117,7 +134,7 @@ def _score_files_sync(
         if top_fn_score:
             composite = max(composite, min(top_fn_score, _FN_BOOST_CAP))
 
-        if composite < min_score and not fn_scored:
+        if not score_all and composite < min_score and not fn_scored:
             continue
 
         meta = node_meta.get(path, {})
@@ -135,7 +152,7 @@ def _score_files_sync(
         })
 
     results.sort(key=lambda x: -x["score"])
-    return results[:top_files]
+    return results if score_all else results[:top_files]
 
 
 # ── Topological sort ───────────────────────────────────────────────────────────
@@ -413,16 +430,70 @@ async def _generate_answer_and_diagram(
         return fallback_answer, _fallback_mermaid(flow, edges)
 
 
-# ── Public API ─────────────────────────────────────────────────────────────────
+# ── Retrieval (no LLM) ──────────────────────────────────────────────────────────
 
-async def semantic_search(
+def _flow_from_neo4j_rows(
+    rows: list[dict],
+    edges: list[dict],
+    node_meta: dict[str, dict],
+) -> list[dict]:
+    """Map Neo4j hybrid-retrieval rows into the standard flow entries.
+
+    Rows arrive ranked by relevance; we topo-sort them by dependency edges for
+    reading order (entry points first), like the in-memory path. Function-level
+    matches aren't produced in Neo4j mode, so ``matched_functions`` is empty.
+    """
+    by_path = {r["file_path"]: r for r in rows}
+    ordered = _topo_sort(list(by_path.keys()), edges)
+
+    flow: list[dict] = []
+    for rank, path in enumerate(ordered, start=1):
+        r = by_path.get(path)
+        if not r:
+            continue
+        meta = node_meta.get(path, {})
+        flow.append({
+            "rank": rank,
+            "file_path": path,
+            "relevance_score": r.get("relevance_score", 0.0),
+            "score_breakdown": {
+                "cosine": r.get("cosine_score", 0.0),
+                "graph_boost": r.get("graph_boost", 0.0),
+            },
+            "layer": str(r.get("layer") or meta.get("layer")
+                         or meta.get("classification") or "unknown"),
+            "language": str(r.get("language") or meta.get("language", "")),
+            "is_entry": bool(r.get("is_entry", meta.get("isEntry", False))),
+            "summary": str(r.get("summary") or meta.get("summary", "") or ""),
+            "matched_functions": [],
+            "retrieved_via": r.get("retrieved_via", "vector"),
+            "graph_boost": r.get("graph_boost", 0.0),
+            "cosine_score": r.get("cosine_score", 0.0),
+        })
+    return flow
+
+
+async def retrieve(
     repo_id: str,
     query: str,
+    *,
     top_files: int = 8,
     top_functions: int = 5,
     min_score: float = 0.30,
+    use_graph: bool = True,
+    seed_count: int = graph_rag.DEFAULT_SEED_COUNT,
+    max_hops: int = graph_rag.DEFAULT_MAX_HOPS,
+    decay: float = graph_rag.DEFAULT_DECAY,
+    alpha: float = graph_rag.DEFAULT_ALPHA,
 ) -> dict[str, Any]:
-    """Full pipeline: embed → score → rank → LLM answer → Mermaid diagram.
+    """Embed → score → (graph expand) → rank into a dependency flow.
+
+    Returns the retrieval result WITHOUT the LLM stage, so it can be reused by
+    the eval harness and by ``semantic_search``. Keys: ``flow``, ``edges``,
+    ``clone_path``, ``total_matched``, ``retrieval`` (mode + params).
+
+    ``use_graph=False`` gives pure vector top-k — the A/B baseline. ``True``
+    runs hybrid dense + graph spreading-activation retrieval.
 
     Raises ValueError if embeddings are not in status='complete'.
     """
@@ -439,7 +510,7 @@ async def semantic_search(
             "Wait for the embedding job to finish before querying."
         )
 
-    # ── Load graph (metadata + edges for flow ordering) ───────────────────────
+    # ── Load graph (metadata + edges for expansion / flow ordering) ───────────
     graph_doc = await db["graphs"].find_one(
         {"repo_id": oid},
         projection={"edges": 1, "nodes": 1, "clone_path": 1},
@@ -454,34 +525,75 @@ async def semantic_search(
         if n.get("id")
     }
 
+    # ── Neo4j-native hybrid retrieval (preferred when available) ──────────────
+    # Vector seeds + graph expansion run inside the database as one Cypher query;
+    # we still use the Mongo edges/clone_path for flow ordering and the LLM stage.
+    if use_graph and settings.neo4j_enabled:
+        from app.db.neo4j_client import is_available as _neo4j_available
+        if _neo4j_available():
+            from app.services import neo4j_retrieval
+            _, q384 = await _embed_query(query)
+            rows = await neo4j_retrieval.retrieve(
+                repo_id, q384, top_files=top_files,
+                seed_k=seed_count, max_hops=max_hops, decay=decay, alpha=alpha,
+            )
+            if rows:
+                flow = _flow_from_neo4j_rows(rows, edges, node_meta)
+                logger.info("[search] repo=%s query=%r via Neo4j (%d files)",
+                            repo_id, query, len(flow))
+                return {
+                    "query": query, "repo_id": repo_id,
+                    "total_matched": len(flow), "flow": flow,
+                    "edges": edges, "clone_path": clone_path,
+                    "retrieval": {
+                        "mode": "neo4j_hybrid", "seed_count": seed_count,
+                        "max_hops": max_hops, "decay": decay, "alpha": alpha,
+                    },
+                }
+            logger.info("[search] Neo4j returned no rows — falling back to in-memory")
+
     file_embeddings: list[dict] = emb_doc.get("file_embeddings", [])
     if not file_embeddings:
         return {
             "query": query, "repo_id": repo_id,
-            "total_matched": 0, "flow": [],
-            "answer": "No embeddings found for this repository.",
-            "mermaid": _fallback_mermaid([], []),
+            "total_matched": 0, "flow": [], "edges": edges,
+            "clone_path": clone_path,
+            "retrieval": {"mode": "empty"},
         }
 
-    logger.info("[search] repo=%s query=%r scoring %d files", repo_id, query, len(file_embeddings))
+    retrieval_mode = "hybrid_graph" if use_graph else "vector_only"
+    logger.info(
+        "[search] repo=%s query=%r scoring %d files (mode=%s)",
+        repo_id, query, len(file_embeddings), retrieval_mode,
+    )
 
-    # ── Embed query + score all files ─────────────────────────────────────────
+    # ── Embed query + score files ─────────────────────────────────────────────
     q768, q384 = await _embed_query(query)
 
+    # Graph mode needs the full candidate pool (low-cosine neighbours included);
+    # vector mode only needs the top-k above threshold.
     scored = await asyncio.to_thread(
         _score_files_sync,
         file_embeddings, node_meta, q768, q384,
         top_files, top_functions, min_score,
+        use_graph,  # score_all
     )
+
+    if use_graph:
+        scored = graph_rag.expand_with_graph(
+            scored, edges,
+            top_files=top_files, min_score=min_score,
+            seed_count=seed_count, max_hops=max_hops,
+            decay=decay, alpha=alpha,
+        )
 
     if not scored:
         logger.info("[search] No results above min_score=%.2f", min_score)
-        no_match_answer = f"No files matched your query '{query}' above the relevance threshold."
         return {
             "query": query, "repo_id": repo_id,
-            "total_matched": 0, "flow": [],
-            "answer": no_match_answer,
-            "mermaid": _fallback_mermaid([], []),
+            "total_matched": 0, "flow": [], "edges": edges,
+            "clone_path": clone_path,
+            "retrieval": {"mode": retrieval_mode},
         }
 
     # ── Topological sort → flow order ─────────────────────────────────────────
@@ -493,7 +605,7 @@ async def semantic_search(
         r = path_to_result.get(path)
         if not r:
             continue
-        flow.append({
+        entry = {
             "rank":            rank,
             "file_path":       r["path"],
             "relevance_score": r["score"],
@@ -507,7 +619,65 @@ async def semantic_search(
             "is_entry": r["is_entry"],
             "summary":  r["summary"],
             "matched_functions": r["matched_functions"],
-        })
+        }
+        # Graph-RAG provenance, present only in hybrid mode.
+        if "final_score" in r:
+            entry["retrieved_via"] = r.get("retrieved_via", "vector")
+            entry["hop_distance"]  = r.get("hop_distance")
+            entry["graph_boost"]   = r.get("graph_boost", 0.0)
+            entry["cosine_score"]  = r.get("cosine_score", r["score"])
+        flow.append(entry)
+
+    return {
+        "query":         query,
+        "repo_id":       repo_id,
+        "total_matched": len(flow),
+        "flow":          flow,
+        "edges":         edges,
+        "clone_path":    clone_path,
+        "retrieval": {
+            "mode":       retrieval_mode,
+            "seed_count": seed_count if use_graph else None,
+            "max_hops":   max_hops if use_graph else None,
+            "decay":      decay if use_graph else None,
+            "alpha":      alpha if use_graph else None,
+        },
+    }
+
+
+# ── Public API ─────────────────────────────────────────────────────────────────
+
+async def semantic_search(
+    repo_id: str,
+    query: str,
+    top_files: int = 8,
+    top_functions: int = 5,
+    min_score: float = 0.30,
+    use_graph: bool = True,
+) -> dict[str, Any]:
+    """Full pipeline: retrieve (hybrid graph-RAG) → LLM answer + Mermaid diagram.
+
+    Raises ValueError if embeddings are not in status='complete'.
+    """
+    result = await retrieve(
+        repo_id, query,
+        top_files=top_files, top_functions=top_functions,
+        min_score=min_score, use_graph=use_graph,
+    )
+
+    flow: list[dict] = result["flow"]
+    edges: list[dict] = result["edges"]
+    clone_path: str | None = result["clone_path"]
+
+    if not flow:
+        no_match = f"No files matched your query '{query}' above the relevance threshold."
+        return {
+            "query": query, "repo_id": repo_id,
+            "total_matched": 0, "flow": [],
+            "answer": no_match,
+            "mermaid": _fallback_mermaid([], []),
+            "retrieval": result["retrieval"],
+        }
 
     logger.info("[search] %d files matched — calling LLM for answer + diagram", len(flow))
 
@@ -522,4 +692,5 @@ async def semantic_search(
         "flow":          flow,
         "answer":        answer,
         "mermaid":       mermaid,
+        "retrieval":     result["retrieval"],
     }

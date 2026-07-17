@@ -42,6 +42,8 @@ class RepoGraphResponse(BaseModel):
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
     meta: dict[str, Any]
+    # Function-level call graph: {caller_file, caller, callee_file, callee}.
+    call_graph: list[dict[str, Any]] = []
 
 
 class RepoActionResponse(BaseModel):
